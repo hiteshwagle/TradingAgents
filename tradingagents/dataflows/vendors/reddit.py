@@ -25,9 +25,10 @@ import time
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
-from urllib.error import HTTPError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+
+import certifi
+import requests
 
 from tradingagents.dataflows.date_window import coverage_gap, in_window
 from tradingagents.dataflows.symbols import crypto_base
@@ -134,7 +135,7 @@ def _jitter(seconds: float, frac: float = 0.2) -> float:
     return seconds * (1.0 + random.uniform(-frac, frac))
 
 
-def _retry_after_seconds(exc: HTTPError) -> float | None:
+def _retry_after_seconds(response) -> float | None:
     """Seconds to wait from a 429's ``Retry-After`` header, capped at 60s.
 
     The cap matches ``_RETRY_FALLBACK_SECONDS``: honouring less than we would
@@ -145,7 +146,7 @@ def _retry_after_seconds(exc: HTTPError) -> float | None:
     ``Retry-After: 0`` returns ``0.0`` (retry at once), not ``None``.
     """
     try:
-        val = exc.headers.get("Retry-After") if getattr(exc, "headers", None) else None
+        val = response.headers.get("Retry-After") if getattr(response, "headers", None) else None
         return min(float(val), 60.0) if val is not None else None
     except (ValueError, TypeError, AttributeError):
         return None
@@ -158,14 +159,18 @@ def _retry_after_seconds(exc: HTTPError) -> float | None:
 _MAX_FEED_BYTES = 5 * 1024 * 1024
 
 
-def _read_capped(resp) -> bytes:
+def _read_capped(response) -> bytes:
     """Read a response body bounded to ``_MAX_FEED_BYTES``, raising on overflow."""
-    data = resp.read(_MAX_FEED_BYTES + 1)
-    if len(data) > _MAX_FEED_BYTES:
-        raise http.client.HTTPException(
-            f"Reddit feed exceeded {_MAX_FEED_BYTES} bytes; refusing to parse"
-        )
-    return data
+    body = bytearray()
+    for chunk in response.iter_content(chunk_size=64 * 1024):
+        if not chunk:
+            continue
+        body.extend(chunk)
+        if len(body) > _MAX_FEED_BYTES:
+            raise http.client.HTTPException(
+                f"Reddit feed exceeded {_MAX_FEED_BYTES} bytes; refusing to parse"
+            )
+    return bytes(body)
 
 
 def _fetch_subreddit_rss(
@@ -187,27 +192,37 @@ def _fetch_subreddit_rss(
     discussion that was never observed (#1295).
     """
     url = _RSS.format(sub=sub, qs=_search_qs(ticker, limit))
-    req = Request(url, headers={"User-Agent": _UA})
+    retry_wait = None
     try:
-        with urlopen(req, timeout=timeout) as resp:
-            root = ET.fromstring(_read_capped(resp))
-    except HTTPError as exc:
-        if exc.code == 429 and _retry:
-            # Honour a server-supplied Retry-After exactly (including 0); jitter
-            # only our own fallback so concurrent runs don't retry in lockstep.
-            retry_after = _retry_after_seconds(exc)
-            wait = retry_after if retry_after is not None else _jitter(_RETRY_FALLBACK_SECONDS)
+        with requests.get(
+            url,
+            headers={"User-Agent": _UA},
+            timeout=timeout,
+            verify=certifi.where(),
+            stream=True,
+        ) as response:
+            if response.status_code == 429 and _retry:
+                # Honour a server-supplied Retry-After exactly (including 0); jitter
+                # only our own fallback so concurrent runs don't retry in lockstep.
+                retry_after = _retry_after_seconds(response)
+                retry_wait = (
+                    retry_after
+                    if retry_after is not None
+                    else _jitter(_RETRY_FALLBACK_SECONDS)
+                )
+            else:
+                response.raise_for_status()
+                root = ET.fromstring(_read_capped(response))
+        if retry_wait is not None:
+            # Retry only after the first streamed response has been closed.
             logger.warning(
                 "Reddit RSS 429 for r/%s · %s — backing off %.1fs then retrying once",
-                sub, ticker, wait,
+                sub, ticker, retry_wait,
             )
-            time.sleep(wait)
+            time.sleep(retry_wait)
             return _fetch_subreddit_rss(ticker, sub, limit, timeout, _retry=False)
-        logger.warning("Reddit RSS fetch failed for r/%s · %s: %s", sub, ticker, exc)
-        return None
-    except (OSError, http.client.HTTPException, ET.ParseError) as exc:
-        # OSError covers URLError/TimeoutError/connection resets; HTTPException
-        # covers chunked-transfer errors (IncompleteRead/BadStatusLine, #1024).
+    except (requests.exceptions.RequestException, http.client.HTTPException, ET.ParseError) as exc:
+        # requests normalizes TLS, timeout, HTTP and chunked-transfer failures.
         logger.warning("Reddit RSS fetch failed for r/%s · %s: %s", sub, ticker, exc)
         return None
 

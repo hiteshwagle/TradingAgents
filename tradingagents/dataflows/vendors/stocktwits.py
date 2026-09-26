@@ -16,11 +16,11 @@ from __future__ import annotations
 
 import contextlib
 import html
-import http.client
-import json
 import logging
 from datetime import datetime
-from urllib.request import Request, urlopen
+
+import certifi
+import requests
 
 from tradingagents.dataflows.date_window import coverage_gap, in_window
 from tradingagents.dataflows.symbols import crypto_base
@@ -95,13 +95,18 @@ def fetch_stocktwits_messages(
     caller never has to special-case None or exceptions.
     """
     url = _API.format(ticker=_stocktwits_symbol(ticker))
-    req = Request(url, headers={"User-Agent": _UA, "Accept": "application/json"})
     try:
-        with urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
-    except (OSError, http.client.HTTPException, json.JSONDecodeError) as exc:
-        # OSError covers URLError/TimeoutError/connection resets; HTTPException
-        # covers chunked-transfer errors (IncompleteRead/BadStatusLine, #1024).
+        response = requests.get(
+            url,
+            headers={"User-Agent": _UA, "Accept": "application/json"},
+            timeout=timeout,
+            verify=certifi.where(),
+        )
+        response.raise_for_status()
+        data = response.json()
+    except (requests.exceptions.RequestException, ValueError) as exc:
+        # requests normalizes TLS, timeout, HTTP and chunked-transfer failures;
+        # ValueError covers a response body that is not valid JSON.
         logger.warning("StockTwits fetch failed for %s: %s", ticker, exc)
         return f"<stocktwits unavailable: {type(exc).__name__}>"
 

@@ -50,8 +50,12 @@ class AnalysisJobManager:
     """Runs analyses asynchronously; state lasts for this process only."""
 
     def __init__(self, runner=None, max_workers: int | None = None, max_jobs: int | None = None):
-        workers = max_workers or int(os.getenv("TRADINGAGENTS_API_WORKERS", "1"))
-        self.max_jobs = max_jobs or int(os.getenv("TRADINGAGENTS_API_MAX_JOBS", "500"))
+        workers = max_workers if max_workers is not None else int(
+            os.getenv("TRADINGAGENTS_API_WORKERS") or "1"
+        )
+        self.max_jobs = max_jobs if max_jobs is not None else int(
+            os.getenv("TRADINGAGENTS_API_MAX_JOBS") or "500"
+        )
         if workers < 1 or self.max_jobs < 1:
             raise ValueError("API workers and max jobs must be positive")
         self.runner = runner or AnalysisRunner()

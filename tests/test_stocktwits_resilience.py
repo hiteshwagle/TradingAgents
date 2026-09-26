@@ -7,27 +7,13 @@ transport error must degrade to a placeholder rather than raise.
 
 from __future__ import annotations
 
-import http.client
-import json
 from unittest.mock import patch
-from urllib.error import HTTPError
 
+import certifi
 import pytest
+import requests
 
 from tradingagents.dataflows.vendors import stocktwits
-
-
-def _raise(exc):
-    class _Resp:
-        def __enter__(self_inner):
-            return self_inner
-
-        def __exit__(self_inner, *a):
-            return False
-
-        def read(self_inner):
-            raise exc
-    return _Resp()
 
 
 @pytest.mark.unit
@@ -35,13 +21,13 @@ class TestStockTwitsResilience:
     @pytest.mark.parametrize(
         "exc",
         [
-            http.client.IncompleteRead(b""),
-            HTTPError("url", 503, "down", {}, None),
-            TimeoutError("slow"),
+            requests.exceptions.ChunkedEncodingError("incomplete"),
+            requests.exceptions.HTTPError("503 down"),
+            requests.exceptions.Timeout("slow"),
         ],
     )
     def test_transport_errors_return_placeholder(self, exc):
-        with patch.object(stocktwits, "urlopen", return_value=_raise(exc)):
+        with patch.object(stocktwits.requests, "get", side_effect=exc):
             out = stocktwits.fetch_stocktwits_messages("NVDA")
         assert "unavailable" in out.lower()
         assert out.startswith("<stocktwits unavailable")
@@ -69,13 +55,15 @@ class TestStockTwitsCryptoSymbols:
     def test_crypto_pair_requests_dot_x_endpoint(self):
         seen = {}
 
-        def fake_urlopen(req, timeout=None):
-            seen["url"] = req.full_url
-            raise TimeoutError("stop after capturing the URL")
+        def fake_get(url, **kwargs):
+            seen["url"] = url
+            seen["kwargs"] = kwargs
+            raise requests.exceptions.Timeout("stop after capturing the URL")
 
-        with patch.object(stocktwits, "urlopen", side_effect=fake_urlopen):
+        with patch.object(stocktwits.requests, "get", side_effect=fake_get):
             stocktwits.fetch_stocktwits_messages("BTC-USD")
         assert "/symbol/BTC.X.json" in seen["url"]
+        assert seen["kwargs"]["verify"] == certifi.where()
 
 
 def _stream(*bodies):
@@ -86,14 +74,11 @@ def _stream(*bodies):
     ]}
 
     class _Resp:
-        def __enter__(self):
-            return self
+        def raise_for_status(self):
+            return None
 
-        def __exit__(self, *a):
-            return False
-
-        def read(self):
-            return json.dumps(payload).encode()
+        def json(self):
+            return payload
     return _Resp()
 
 
@@ -104,20 +89,20 @@ def _drop_spam(texts):
 @pytest.mark.unit
 class TestStockTwitsScreening:
     def test_screened_out_messages_leave_the_block_and_its_counts(self):
-        with patch.object(stocktwits, "urlopen", return_value=_stream("SPAM", "long NVDA")):
+        with patch.object(stocktwits.requests, "get", return_value=_stream("SPAM", "long NVDA")):
             out = stocktwits.fetch_stocktwits_messages("NVDA", screen=_drop_spam)
         assert out.startswith("Screened: note")
         assert "long NVDA" in out and "SPAM" not in out
         assert "Total: 1 most-recent" in out
 
     def test_all_screened_out_is_not_called_empty(self):
-        with patch.object(stocktwits, "urlopen", return_value=_stream("SPAM")):
+        with patch.object(stocktwits.requests, "get", return_value=_stream("SPAM")):
             out = stocktwits.fetch_stocktwits_messages("NVDA", screen=_drop_spam)
         assert "none of the 1 StockTwits messages is about $NVDA" in out
 
 
 @pytest.mark.unit
 def test_html_entities_in_message_bodies_are_decoded():
-    with patch.object(stocktwits, "urlopen", return_value=_stream("S&amp;P wasn&#39;t up")):
+    with patch.object(stocktwits.requests, "get", return_value=_stream("S&amp;P wasn&#39;t up")):
         out = stocktwits.fetch_stocktwits_messages("NVDA")
     assert "S&P wasn't up" in out

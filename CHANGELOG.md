@@ -34,6 +34,9 @@ Some modules moved, and the old import paths are gone. Update imports as follows
 
 ### Fixed
 
+- StockTwits and Reddit now use `requests` with Certifi's CA bundle, matching X
+  Posts and avoiding `CERTIFICATE_VERIFY_FAILED` on Python installations whose
+  default `urllib` trust store lacks the issuing CA.
 - Several graphs in one process each read their own data vendors. (#1369)
 - SEC EDGAR cash flow statements find capital expenditure for filers that moved it to purchases of productive assets (NVIDIA since fiscal 2022, Amazon since 2016), whose recent periods read as empty. (#1370)
 - SEC EDGAR annual statements list fiscal years only.

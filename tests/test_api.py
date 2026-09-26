@@ -38,6 +38,16 @@ def test_api_requires_configured_key():
         manager.shutdown()
 
 
+def test_blank_job_limit_environment_values_use_defaults(monkeypatch):
+    monkeypatch.setenv("TRADINGAGENTS_API_WORKERS", "")
+    monkeypatch.setenv("TRADINGAGENTS_API_MAX_JOBS", "")
+    manager = AnalysisJobManager(runner=FakeRunner())
+    try:
+        assert manager.max_jobs == 500
+    finally:
+        manager.shutdown()
+
+
 def test_analysis_job_returns_structured_json():
     client, manager = _client()
     headers = {"Authorization": "Bearer secret"}

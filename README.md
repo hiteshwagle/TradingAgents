@@ -205,6 +205,11 @@ posts = result["posts"]
 
 With `TYPESAFE_API_KEY` set, the Sentiment Analyst screens StockTwits, X, and Reddit posts with TypeSafe's Jev before reading them. Posts that are not about the company are dropped, and each source opens with a count of the remaining posts by stance: bullish, bearish, neutral, or unclear. Without the key, posts pass through unscreened. `jev-latest` moves with new releases; set `TYPESAFE_DEFAULT_MODEL` to a versioned ID such as `jev-1.13.0` to hold it fixed across runs.
 
+StockTwits, Reddit, and X HTTPS requests use `requests` with certificate
+verification enabled against Certifi's current CA bundle. This avoids relying on
+an incomplete operating-system or Python `urllib` trust store; TLS verification
+is never disabled.
+
 Alternatively, copy `.env.example` to `.env` and fill in your keys:
 ```bash
 cp .env.example .env

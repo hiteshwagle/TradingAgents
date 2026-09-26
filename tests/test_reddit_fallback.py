@@ -3,11 +3,11 @@ chunked-transfer error handling (#1024)."""
 
 from __future__ import annotations
 
-import http.client
 from unittest.mock import patch
-from urllib.error import HTTPError
 
+import certifi
 import pytest
+import requests
 
 from tradingagents.dataflows.vendors import reddit
 
@@ -27,29 +27,36 @@ _SAMPLE_ATOM = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
-def _resp(read_fn):
-    """A minimal context-manager response whose read() runs ``read_fn``."""
+def _resp(body=b"", *, status=200, headers=None, stream_error=None):
+    """A minimal streamed requests response."""
     class _Resp:
+        status_code = status
+
+        def __init__(self):
+            self.headers = headers or {}
+
         def __enter__(self_inner):
             return self_inner
 
         def __exit__(self_inner, *a):
             return False
 
-        def read(self_inner, size=-1):
-            data = read_fn()
-            return data if size is None or size < 0 else data[:size]
+        def raise_for_status(self_inner):
+            if self_inner.status_code >= 400:
+                raise requests.exceptions.HTTPError(
+                    f"HTTP {self_inner.status_code}", response=self_inner
+                )
+
+        def iter_content(self_inner, chunk_size=1):
+            if stream_error:
+                raise stream_error
+            for offset in range(0, len(body), chunk_size):
+                yield body[offset: offset + chunk_size]
     return _Resp()
 
 
 def _atom_resp():
-    return _resp(lambda: _SAMPLE_ATOM.encode("utf-8"))
-
-
-def _raise(exc):
-    def _r():
-        raise exc
-    return _resp(_r)
+    return _resp(_SAMPLE_ATOM.encode("utf-8"))
 
 
 @pytest.mark.unit
@@ -76,24 +83,26 @@ class TestStripHtml:
 @pytest.mark.unit
 class TestRssParsing:
     def test_parses_atom_entries(self):
-        with patch.object(reddit, "urlopen", return_value=_atom_resp()):
+        with patch.object(reddit.requests, "get", return_value=_atom_resp()) as get:
             posts = reddit._fetch_subreddit_rss("NVDA", "stocks", limit=5, timeout=5.0)
         assert len(posts) == 2
         assert posts[0]["title"] == "NVDA earnings beat, stock pops"
         assert posts[0]["created_utc"] > 0
         assert "datacenter unit" in posts[0]["selftext"]
         assert posts[0]["subreddit"] == "stocks"
+        assert get.call_args.kwargs["verify"] == certifi.where()
+        assert get.call_args.kwargs["stream"] is True
 
     def test_malformed_xml_reports_unavailable(self):
-        with patch.object(reddit, "urlopen", return_value=_resp(lambda: b"<<not xml>>")):
+        with patch.object(reddit.requests, "get", return_value=_resp(b"<<not xml>>")):
             assert reddit._fetch_subreddit_rss("NVDA", "stocks", 5, 5.0) is None
 
 
 @pytest.mark.unit
 class TestRss429Backoff:
     def test_429_then_success_retries_once(self):
-        err = HTTPError("url", 429, "Too Many Requests", {}, None)
-        with patch.object(reddit, "urlopen", side_effect=[err, _atom_resp()]) as op, \
+        limited = _resp(status=429)
+        with patch.object(reddit.requests, "get", side_effect=[limited, _atom_resp()]) as op, \
              patch.object(reddit.time, "sleep") as slept:
             posts = reddit._fetch_subreddit_rss("NVDA", "stocks", 5, 5.0)
         assert op.call_count == 2          # original + exactly one retry
@@ -101,16 +110,17 @@ class TestRss429Backoff:
         assert len(posts) == 2
 
     def test_429_twice_gives_up_after_one_retry(self):
-        err = HTTPError("url", 429, "Too Many Requests", {}, None)
-        with patch.object(reddit, "urlopen", side_effect=[err, err]) as op, \
+        with patch.object(
+            reddit.requests, "get", side_effect=[_resp(status=429), _resp(status=429)]
+        ) as op, \
              patch.object(reddit.time, "sleep"):
             posts = reddit._fetch_subreddit_rss("NVDA", "stocks", 5, 5.0)
         assert op.call_count == 2          # one retry, then gives up cleanly
         assert posts is None
 
     def test_retry_after_header_is_honoured(self):
-        err = HTTPError("url", 429, "Too Many Requests", {"Retry-After": "12"}, None)
-        with patch.object(reddit, "urlopen", side_effect=[err, _atom_resp()]), \
+        limited = _resp(status=429, headers={"Retry-After": "12"})
+        with patch.object(reddit.requests, "get", side_effect=[limited, _atom_resp()]), \
              patch.object(reddit.time, "sleep") as slept:
             reddit._fetch_subreddit_rss("NVDA", "stocks", 5, 5.0)
         slept.assert_called_once_with(12.0)
@@ -118,8 +128,8 @@ class TestRss429Backoff:
     def test_retry_after_zero_is_honoured_not_treated_as_absent(self):
         # A valid "Retry-After: 0" means retry at once; it must not fall through
         # to the fallback wait (the earlier `or 5.0` bug turned 0 into 5s).
-        err = HTTPError("url", 429, "Too Many Requests", {"Retry-After": "0"}, None)
-        with patch.object(reddit, "urlopen", side_effect=[err, _atom_resp()]), \
+        limited = _resp(status=429, headers={"Retry-After": "0"})
+        with patch.object(reddit.requests, "get", side_effect=[limited, _atom_resp()]), \
              patch.object(reddit.time, "sleep") as slept:
             reddit._fetch_subreddit_rss("NVDA", "stocks", 5, 5.0)
         slept.assert_called_once_with(0.0)
@@ -127,8 +137,9 @@ class TestRss429Backoff:
     def test_headerless_429_fallback_is_jittered(self):
         # No Retry-After -> our own ~5s fallback, jittered so concurrent runs
         # don't retry in lockstep (kept within a tight band).
-        err = HTTPError("url", 429, "Too Many Requests", {}, None)
-        with patch.object(reddit, "urlopen", side_effect=[err, _atom_resp()]), \
+        with patch.object(
+            reddit.requests, "get", side_effect=[_resp(status=429), _atom_resp()]
+        ), \
              patch.object(reddit.time, "sleep") as slept:
             reddit._fetch_subreddit_rss("NVDA", "stocks", 5, 5.0)
         slept.assert_called_once()
@@ -142,15 +153,16 @@ class TestChunkedTransferErrorsHandled:
     OSErrors, so they were previously uncaught and crashed the pipeline (#1024)."""
 
     def test_rss_incomplete_read_reports_unavailable(self):
-        with patch.object(reddit, "urlopen", return_value=_raise(http.client.IncompleteRead(b""))):
+        response = _resp(stream_error=requests.exceptions.ChunkedEncodingError("incomplete"))
+        with patch.object(reddit.requests, "get", return_value=response):
             assert reddit._fetch_subreddit_rss("NVDA", "stocks", 5, 5.0) is None
 
     def test_oversized_rss_feed_is_refused_not_parsed(self):
         # A hostile/misbehaving endpoint streaming an unbounded body must not be
         # read into memory before parsing; overflow degrades to an empty feed.
-        big = _resp(lambda: b"x" * 100)
+        big = _resp(b"x" * 100)
         with patch.object(reddit, "_MAX_FEED_BYTES", 10), \
-             patch.object(reddit, "urlopen", return_value=big):
+             patch.object(reddit.requests, "get", return_value=big):
             assert reddit._fetch_subreddit_rss("NVDA", "stocks", 5, 5.0) is None
 
 
