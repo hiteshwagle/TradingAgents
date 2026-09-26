@@ -77,7 +77,7 @@ Our framework decomposes complex trading tasks into specialized roles.
 
 ### Analyst Team
 - Fundamentals Analyst: Evaluates company financials and performance metrics, identifying intrinsic values and potential red flags.
-- Sentiment Analyst: Aggregates news headlines, StockTwits, and Reddit chatter into a single sentiment read to gauge short-term market mood.
+- Sentiment Analyst: Aggregates news headlines, StockTwits, X Posts, and Reddit chatter into a single sentiment read to gauge short-term market mood.
 - News Analyst: Monitors global news and macroeconomic indicators, interpreting the impact of events on market conditions.
 - Technical Analyst: Utilizes technical indicators (like MACD and RSI) to detect trading patterns and forecast price movements.
 
@@ -172,6 +172,7 @@ export GROQ_API_KEY=...            # Groq
 export NVIDIA_API_KEY=...          # NVIDIA NIM
 export FRED_API_KEY=...            # FRED macro data (free, optional)
 export ALPHA_VANTAGE_API_KEY=...   # Alpha Vantage
+export X_BEARER_TOKEN=...          # X recent-Post search (optional, usage-billed by X)
 export TYPESAFE_API_KEY=...        # Jev social-post screening (optional)
 ```
 
@@ -183,7 +184,26 @@ For local models, configure Ollama with `llm_provider: "ollama"`. The default en
 
 For any other OpenAI-compatible server (vLLM, LM Studio, llama.cpp, or a custom relay), use `llm_provider: "openai_compatible"` and set the endpoint via `backend_url` (or `TRADINGAGENTS_LLM_BACKEND_URL`), e.g. `http://localhost:8000/v1` for vLLM or `http://localhost:1234/v1` for LM Studio. The model is whatever your server serves. No key is needed for local servers; set `OPENAI_COMPATIBLE_API_KEY` when the endpoint requires one.
 
-With `TYPESAFE_API_KEY` set, the Sentiment Analyst screens StockTwits and Reddit posts with TypeSafe's Jev before reading them. Posts that are not about the company are dropped, and each source opens with a count of the remaining posts by stance: bullish, bearish, neutral, or unclear. Without the key, posts pass through unscreened. `jev-latest` moves with new releases; set `TYPESAFE_DEFAULT_MODEL` to a versioned ID such as `jev-1.13.0` to hold it fixed across runs.
+With `X_BEARER_TOKEN` set, the Sentiment Analyst adds recent X Posts matching the ticker/company and market-event terms (earnings, revenue, guidance, acquisitions, partnerships, SEC activity, upgrades, and downgrades). The client follows X's current recent-search contract (`post.fields`, with `author_id` requested as an expansion) and orders Posts by `likes + 2×reposts + replies` using X's `repost_count` metric. It also accepts the former `retweet_count` name in existing cache files. HTTPS requests use `requests` with the CA bundle supplied explicitly by `certifi`. That score measures attention, not sentiment or credibility. Set `X_POST_LIMIT_PER_SYMBOL` (default `20`) and `X_CACHE_TTL_SECONDS` (default `86400`) to control usage. The recent-search endpoint is for live/recent analysis and may not cover an older backtest date. Without the token, the X source is marked unavailable and the run continues. API failures include a sanitized status/reason in the report and terminal log; the bearer token is redacted.
+
+Query the same packaged client directly as JSON:
+
+```bash
+tradingagents-x NVDA --company NVIDIA --limit 20
+# From an uninstalled source checkout:
+python -m cli.x_posts NVDA --company NVIDIA --limit 20
+```
+
+Python callers can import it without adding the parent repository to `PYTHONPATH`:
+
+```python
+from tradingagents.dataflows.vendors.x_posts import search_symbol_posts
+
+result = search_symbol_posts("NVDA", "NVIDIA", limit=20)
+posts = result["posts"]
+```
+
+With `TYPESAFE_API_KEY` set, the Sentiment Analyst screens StockTwits, X, and Reddit posts with TypeSafe's Jev before reading them. Posts that are not about the company are dropped, and each source opens with a count of the remaining posts by stance: bullish, bearish, neutral, or unclear. Without the key, posts pass through unscreened. `jev-latest` moves with new releases; set `TYPESAFE_DEFAULT_MODEL` to a versioned ID such as `jev-1.13.0` to hold it fixed across runs.
 
 Alternatively, copy `.env.example` to `.env` and fill in your keys:
 ```bash

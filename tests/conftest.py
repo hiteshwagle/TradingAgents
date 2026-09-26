@@ -7,7 +7,7 @@ import pytest
 
 
 def _blank_settings_overlay():
-    """Blank every TRADINGAGENTS_* setting before the package is imported.
+    """Blank project settings and the billed X credential before imports.
 
     The package loads .env on import and folds these variables into
     DEFAULT_CONFIG, so a contributor's own settings would become the defaults
@@ -20,7 +20,7 @@ def _blank_settings_overlay():
     for filename in (".env", ".env.enterprise"):
         names |= set(dotenv_values(find_dotenv(filename, usecwd=True)))
     for name in names:
-        if name.startswith("TRADINGAGENTS_"):
+        if name.startswith("TRADINGAGENTS_") or name == "X_BEARER_TOKEN":
             os.environ[name] = ""
 
 
