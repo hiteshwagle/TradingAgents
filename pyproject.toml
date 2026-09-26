@@ -30,9 +30,16 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "httpx>=0.27",
     "ruff>=0.15",
     "pytest>=8.0",
     "pytest-subtests>=0.13",
+]
+# Versioned HTTP API for local or service-to-service integrations. Kept
+# optional so library/CLI users do not install a web server they do not use.
+api = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.29",
 ]
 # Amazon Bedrock support (AWS SigV4 auth + boto3). Optional so the core install
 # stays lean: pip install "tradingagents[bedrock]".
@@ -43,6 +50,7 @@ bedrock = [
 [project.scripts]
 tradingagents = "cli.main:app"
 tradingagents-x = "cli.x_posts:main"
+tradingagents-api = "tradingagents.api.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["tradingagents*", "cli*"]

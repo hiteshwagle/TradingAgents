@@ -283,6 +283,51 @@ print(decision)
 
 See `tradingagents/default_config.py` for all configuration options.
 
+### Local HTTP API
+
+Install the API extra and start the service:
+
+```bash
+pip install -e ".[api]"
+export TRADINGAGENTS_API_KEY="replace-with-a-strong-local-key"
+tradingagents-api
+```
+
+The server binds to `127.0.0.1:8000` by default. Interactive OpenAPI documentation
+is available at `http://127.0.0.1:8000/docs`. Keep the loopback binding unless a
+trusted reverse proxy provides TLS and network access control. The API key is
+optional on loopback; startup rejects a non-loopback host when no key is configured.
+The command loads the repository's `.env` file automatically.
+
+Start an asynchronous stock study:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/analyses \
+  -H "Authorization: Bearer $TRADINGAGENTS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "AAPL",
+    "trade_date": "2026-09-01",
+    "asset_type": "stock",
+    "analysts": ["market", "social", "news", "fundamentals"],
+    "options": {"max_debate_rounds": 1, "max_risk_rounds": 1}
+  }'
+```
+
+The response contains an `analysis_id`. Poll
+`GET /v1/analyses/{analysis_id}` until its status is `completed`; the result is
+JSON with the final rating, trader entry/stop fields, reports, debates, and source
+URLs. `GET /v1/analyses/{analysis_id}/events` returns job progress and
+`POST /v1/analyses/{analysis_id}/cancel` requests cancellation. Other discovery
+endpoints are `GET /v1/health` and `GET /v1/capabilities`.
+
+The API performs analysis only and never sends broker orders. LLM/data credentials,
+provider endpoints, and output paths remain server-side. Jobs are currently kept in
+process memory, so restarting the server clears API job status; generated reports
+and normal TradingAgents logs remain on disk. One worker is the safe default because
+each analysis is resource-intensive; tune `TRADINGAGENTS_API_WORKERS` only after
+validating provider rate limits and storage concurrency.
+
 ### Fundamentals as filed
 
 US company statements can come from SEC EDGAR, which records the date every figure was filed. A run dated in the past then reads the statements exactly as they stood that day: a fiscal year that has ended but has not been filed yet is not served, and a figure restated later still reads as first reported. Apple's 2008 total assets were filed as $39.6B and restated to $36.2B in 2010, so a run dated in between reads $39.6B.
