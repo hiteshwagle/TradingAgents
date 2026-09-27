@@ -2,6 +2,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from tradingagents.agents.context import get_instrument_context_from_state, get_language_instruction
 from tradingagents.agents.tools import (
+    get_company_events,
     get_global_news,
     get_news,
 )
@@ -10,6 +11,7 @@ from tradingagents.agents.tools import (
 TOOLS = (
     get_news,
     get_global_news,
+    get_company_events,
 )
 
 
@@ -21,7 +23,7 @@ def create_news_analyst(llm):
         instrument_context = get_instrument_context_from_state(state)
 
         system_message = (
-            f"You are a news researcher tasked with analyzing recent news and events over the past week. Use get_news(ticker, start_date, end_date) for {asset_label}-specific news and get_global_news(curr_date, look_back_days, limit) for broader market, sector, geopolitical, and economic headlines. Focus on confirmed catalysts, publication dates, source quality, and direct relevance to the instrument. The dedicated Macro Analyst owns FRED indicators and prediction-market probabilities, so do not invent macro data that the news tools do not return. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
+            f"You are a news researcher tasked with analyzing recent news and events over the past week. Use get_news(ticker, start_date, end_date) for {asset_label}-specific news, get_global_news(curr_date, look_back_days, limit) for broader market, sector, geopolitical, and economic headlines, and get_company_events(ticker, curr_date, look_ahead_days) for upcoming earnings or IPO event risk when available. Focus on confirmed catalysts, publication dates, source quality, and direct relevance to the instrument. The dedicated Macro Analyst owns FRED indicators and prediction-market probabilities, so do not invent macro data that the news tools do not return. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
             + get_language_instruction()
         )

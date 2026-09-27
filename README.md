@@ -79,7 +79,7 @@ Our framework decomposes complex trading tasks into specialized roles.
 - Fundamentals Analyst: Evaluates company financials and performance metrics, identifying intrinsic values and potential red flags.
 - Sentiment Analyst: Aggregates news headlines, StockTwits, X Posts, and Reddit chatter into a single sentiment read to gauge short-term market mood.
 - News Analyst: Monitors company, sector, global-market, and geopolitical news, interpreting confirmed catalysts and risks.
-- Macro Analyst: Separately evaluates rates, inflation, growth, liquidity, Treasury yields, global macro news, and forward-looking event probabilities for stocks and crypto.
+- Macro Analyst: Separately evaluates rates, inflation, growth, liquidity, Treasury yields, global macro news, forward-looking event probabilities, and upcoming FRED economic-release dates for stocks and crypto. Release dates are event-risk context rather than directional signals; historical runs withhold the live calendar, and FOMC meetings still require the Federal Reserve's official calendar.
 - Technical Analyst: Utilizes technical indicators (like MACD and RSI) to detect trading patterns and forecast price movements.
 
 <p align="center">
@@ -173,6 +173,9 @@ export GROQ_API_KEY=...            # Groq
 export NVIDIA_API_KEY=...          # NVIDIA NIM
 export FRED_API_KEY=...            # FRED macro data (free, optional)
 export ALPHA_VANTAGE_API_KEY=...   # Alpha Vantage
+export APCA_API_KEY_ID=...         # Alpaca Market Data news (optional)
+export APCA_API_SECRET_KEY=...     # Alpaca Market Data news (optional)
+export FINNHUB_API_KEY=...         # Finnhub shared data enrichment (optional)
 export X_BEARER_TOKEN=...          # X recent-Post search (optional, usage-billed by X)
 export TYPESAFE_API_KEY=...        # Jev social-post screening (optional)
 ```
@@ -206,8 +209,61 @@ posts = result["posts"]
 
 With `TYPESAFE_API_KEY` set, the Sentiment Analyst screens StockTwits, X, and Reddit posts with TypeSafe's Jev before reading them. Posts that are not about the company are dropped, and each source opens with a count of the remaining posts by stance: bullish, bearish, neutral, or unclear. Without the key, posts pass through unscreened. `jev-latest` moves with new releases; set `TYPESAFE_DEFAULT_MODEL` to a versioned ID such as `jev-1.13.0` to hold it fixed across runs.
 
+Alpaca Market Data, Yahoo Finance, and Finnhub are enabled for symbol-specific
+news used by the News and Sentiment Analysts. Set `APCA_API_KEY_ID` and
+`APCA_API_SECRET_KEY` (`ALPACA_API_KEY` and `ALPACA_SECRET_KEY` are accepted
+aliases), and set `FINNHUB_API_KEY` to include Finnhub. The default configuration is:
+
+```python
+from copy import deepcopy
+
+from tradingagents.default_config import DEFAULT_CONFIG
+
+config = deepcopy(DEFAULT_CONFIG)
+config["tool_vendors"]["get_news"] = "alpaca,yfinance,finnhub"
+config["tool_vendor_modes"]["get_news"] = "aggregate"
+```
+
+Aggregate mode calls every configured provider and labels each result so the
+agent can use the combined coverage. If Alpaca or Finnhub is not configured,
+throttled, unavailable, or has no usable articles, Yahoo Finance still supplies news. Alpaca results come
+from its historical News API (currently supplied by Benzinga), include article
+content when available, and are defensively filtered by both creation and update
+timestamps so a past analysis cannot read a later article revision. Alpaca is
+never used for global news or insider transactions.
+
+Finnhub is a shared vendor rather than a separate client in every agent. News
+and Sentiment receive company news; News and Macro receive current general,
+forex, crypto, and merger news; Fundamentals receives company profile, peers,
+metrics, earnings, recommendation, filing-adjacent, and insider evidence; and
+Market can use live US quote and exchange-session context. Research, Risk, and
+Trader consume the analyst reports and do not repeat those API calls. Responses
+share a disk cache under `TRADINGAGENTS_CACHE_DIR/finnhub`, per-key
+single-flight locks, a process-wide rate limiter, a per-run request budget, and
+bounded concurrency. Cache hits do not consume the per-run budget.
+
+Set the per-minute allowance to the value displayed in your Finnhub dashboard:
+
+```env
+FINNHUB_API_KEY=...
+FINNHUB_REQUESTS_PER_MINUTE=30
+FINNHUB_MAX_CALLS_PER_RUN=30
+FINNHUB_MAX_CONCURRENCY=2
+FINNHUB_CACHE_TTL_SECONDS=900
+FINNHUB_HISTORICAL_CACHE_TTL_SECONDS=86400
+```
+
+The defaults of 30 requests/minute and 30 uncached requests per TradingAgents
+run are deliberately conservative. When the run budget is exhausted, Finnhub
+stops and the configured vendor chain continues with other providers. Live
+quotes, exchange state, current metrics/profile, latest market news, and event-calendar
+snapshots are withheld from historical runs. Dated company news, earnings,
+recommendations, and insider rows are filtered at the analysis cutoff. Finnhub
+is optional: another configured vendor can still serve the run when its key is
+missing, its free entitlement excludes an endpoint, or it is throttled.
+
 Project-owned HTTPS requests—including StockTwits, Reddit, X, FRED, SEC EDGAR,
-Polymarket, and Jev—use `requests` with certificate
+Polymarket, Alpaca, Finnhub, and Jev—use `requests` with certificate
 verification enabled against Certifi's current CA bundle. This avoids relying on
 an incomplete operating-system or Python `urllib` trust store; TLS verification
 is never disabled.

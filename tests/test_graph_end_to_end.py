@@ -41,7 +41,8 @@ STRUCTURED = {
 }
 
 ARGS = {"symbol": "NVDA", "ticker": "NVDA", "curr_date": TRADE_DATE, "start_date": "2026-01-02",
-        "end_date": TRADE_DATE, "indicator": "rsi", "topic": "Fed rate cut", "freq": "quarterly"}
+        "end_date": TRADE_DATE, "indicator": "rsi", "topic": "Fed rate cut",
+        "look_ahead_days": 14, "freq": "quarterly"}
 
 
 class ScriptedModel(BaseChatModel):
@@ -133,9 +134,11 @@ def test_a_full_run_reaches_a_logged_decision(tmp_path, monkeypatch, offline, st
                 "investment_plan", "trader_investment_plan", "final_trade_decision"):
         assert state[key].strip(), key
     tool_methods = {"get_stock_data", "get_indicators", "get_news", "get_global_news",
-                    "get_macro_indicators", "get_prediction_markets", "get_fundamentals",
+                    "get_macro_indicators", "get_macro_release_calendar",
+                    "get_prediction_markets", "get_fundamentals",
                     "get_balance_sheet", "get_cashflow", "get_income_statement",
-                    "get_insider_transactions", "ohlcv"}
+                    "get_insider_transactions", "get_company_events",
+                    "get_live_market_context", "ohlcv"}
     assert offline == tool_methods
     assert [e["rating"] for e in graph.memory_log.load_entries()] == ["Overweight"]
 

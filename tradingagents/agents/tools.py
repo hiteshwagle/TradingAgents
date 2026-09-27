@@ -226,6 +226,42 @@ def get_insider_transactions(
 
 
 @tool
+def get_company_events(
+    ticker: Annotated[str, "ticker symbol"],
+    curr_date: Annotated[str, "current analysis date in yyyy-mm-dd format"],
+    look_ahead_days: Annotated[int | None, "days ahead to inspect; omit for 30"] = None,
+    trade_date: Annotated[str, InjectedState("trade_date")] = "",
+) -> str:
+    """Retrieve upcoming company earnings and IPO event risk.
+
+    Latest-only calendars are withheld automatically during historical runs.
+    """
+    return route_to_vendor(
+        "get_company_events",
+        ticker,
+        as_of(curr_date, trade_date),
+        look_ahead_days,
+    )
+
+
+@tool
+def get_live_market_context(
+    ticker: Annotated[str, "ticker symbol"],
+    curr_date: Annotated[str, "current analysis date in yyyy-mm-dd format"],
+    trade_date: Annotated[str, InjectedState("trade_date")] = "",
+) -> str:
+    """Retrieve a live US quote and exchange-session status when analyzing today.
+
+    This supplements but never replaces the verified dated market snapshot.
+    """
+    return route_to_vendor(
+        "get_live_market_context",
+        ticker,
+        as_of(curr_date, trade_date),
+    )
+
+
+@tool
 def get_macro_indicators(
     indicator: Annotated[
         str,
@@ -255,6 +291,27 @@ def get_macro_indicators(
         str: A formatted markdown report of the macro series
     """
     return route_to_vendor("get_macro_indicators", indicator, as_of(curr_date, trade_date), look_back_days)
+
+
+@tool
+def get_macro_release_calendar(
+    curr_date: Annotated[str, "Current date in yyyy-mm-dd format"],
+    look_ahead_days: Annotated[
+        int | None, "Number of calendar days ahead, from 1 to 90; omit for 14"
+    ] = None,
+    trade_date: Annotated[str, InjectedState("trade_date")] = "",
+) -> str:
+    """Retrieve upcoming market-relevant economic release dates from FRED.
+
+    This is event-risk context, not a directional signal. Historical runs
+    withhold it because FRED does not expose a reliable vintage of the future
+    release calendar as it appeared on a past decision date.
+    """
+    return route_to_vendor(
+        "get_macro_release_calendar",
+        as_of(curr_date, trade_date),
+        look_ahead_days,
+    )
 
 
 @tool

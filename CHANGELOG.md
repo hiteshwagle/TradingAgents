@@ -14,6 +14,10 @@ Changes that need action when upgrading are listed first in their release.
   point-in-time FRED indicators, global macro news, Polymarket probabilities,
   and instrument news. Its report is included in research and risk debates,
   persisted as `1_analysts/macro.md`, and returned as `reports.macro` by the API.
+- **FRED release-calendar tool.** The Macro Analyst can identify upcoming
+  market-moving economic releases and days-to-event for live runs. Historical
+  runs withhold the current calendar to avoid schedule look-ahead, and the
+  report explicitly treats dates as event risk rather than direction.
 - **Explicit Certifi verification for all project-owned HTTP clients.** FRED,
   SEC EDGAR, Polymarket, and Jev now join StockTwits, Reddit, and X in passing
   Certifi's CA bundle explicitly to `requests`.

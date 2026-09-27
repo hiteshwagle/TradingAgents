@@ -9,6 +9,7 @@ from tradingagents.agents.context import (
 from tradingagents.agents.tools import (
     get_global_news,
     get_macro_indicators,
+    get_macro_release_calendar,
     get_news,
     get_prediction_markets,
 )
@@ -17,6 +18,7 @@ from tradingagents.agents.tools import (
 # the same broad sources as AlpacaTradingAgent's former standalone Macro Agent.
 TOOLS = (
     get_macro_indicators,
+    get_macro_release_calendar,
     get_global_news,
     get_prediction_markets,
     get_news,
@@ -37,8 +39,10 @@ def create_macro_analyst(llm):
             "Ground the report in tool evidence rather than general model knowledge. "
             "Use get_macro_indicators for the most relevant FRED series, including policy "
             "rates, inflation, labor, growth, Treasury yields or the yield curve, market "
-            "volatility, dollar strength, and liquidity when relevant. Use get_global_news "
-            "for central-bank, fiscal, geopolitical, and economic-release developments; "
+            "volatility, dollar strength, and liquidity when relevant. Call "
+            "get_macro_release_calendar to identify scheduled data-release risk; use those "
+            "dates for timing and risk controls, never as a directional signal. Use "
+            "get_global_news for central-bank, fiscal, geopolitical, and economic developments; "
             "get_prediction_markets for forward-looking event probabilities; and get_news "
             "when symbol-specific news is needed to connect the macro regime to the asset. "
             "For crypto, explicitly assess global liquidity, real yields, dollar strength, "

@@ -11,6 +11,7 @@ from tradingagents.agents.rating import parse_rating
 from tradingagents.dataflows.config import run_config, set_config
 from tradingagents.dataflows.date_window import get_current_date
 from tradingagents.dataflows.symbols import safe_ticker_component
+from tradingagents.dataflows.vendors.finnhub.client import finnhub_run_budget
 from tradingagents.decision_log import TradingMemoryLog
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.llm_clients import build_llm_kwargs, create_llm_client
@@ -112,6 +113,7 @@ class TradingAgentsGraph:
         self.workflow = self.graph_setup.setup_graph(selected_analysts)
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
+        self._finnhub_budget_ctx = None
         self._resuming = False
 
     def resolve_instrument_context(self, ticker: str, asset_type: str = "stock",
@@ -191,22 +193,34 @@ class TradingAgentsGraph:
         graph, making the flag a no-op.
         """
         self._resuming = False
-        if not self.config.get("checkpoint_enabled"):
-            return None
-        signature = self._run_signature(asset_type, portfolio)
-        self._checkpointer_ctx = get_checkpointer(self.config["data_cache_dir"], company_name)
-        saver = self._checkpointer_ctx.__enter__()
-        self.graph = self.workflow.compile(checkpointer=saver)
-
-        step = checkpoint_step(
-            self.config["data_cache_dir"], company_name, str(trade_date), signature
+        self._finnhub_budget_ctx = finnhub_run_budget(
+            self.config.get("finnhub_max_calls_per_run", 30)
         )
-        self._resuming = step is not None
-        if step is not None:
-            logger.info("Resuming from step %d for %s on %s", step, company_name, trade_date)
-        else:
-            logger.info("Starting fresh for %s on %s", company_name, trade_date)
-        return thread_id(company_name, str(trade_date), signature)
+        self._finnhub_budget_ctx.__enter__()
+        try:
+            if not self.config.get("checkpoint_enabled"):
+                return None
+            signature = self._run_signature(asset_type, portfolio)
+            self._checkpointer_ctx = get_checkpointer(
+                self.config["data_cache_dir"], company_name
+            )
+            saver = self._checkpointer_ctx.__enter__()
+            self.graph = self.workflow.compile(checkpointer=saver)
+
+            step = checkpoint_step(
+                self.config["data_cache_dir"], company_name, str(trade_date), signature
+            )
+            self._resuming = step is not None
+            if step is not None:
+                logger.info(
+                    "Resuming from step %d for %s on %s", step, company_name, trade_date
+                )
+            else:
+                logger.info("Starting fresh for %s on %s", company_name, trade_date)
+            return thread_id(company_name, str(trade_date), signature)
+        except Exception:
+            self.end_checkpoint()
+            raise
 
     def checkpoint_input(self, init_state):
         """The value to stream/invoke: ``None`` to resume an existing checkpoint,
@@ -220,11 +234,18 @@ class TradingAgentsGraph:
 
     def end_checkpoint(self):
         """Restore the plain uncheckpointed graph after a checkpointed run."""
-        if self._checkpointer_ctx is not None:
-            self._checkpointer_ctx.__exit__(None, None, None)
-            self._checkpointer_ctx = None
-            self.graph = self.workflow.compile()
-        self._resuming = False
+        checkpointer_ctx = self._checkpointer_ctx
+        self._checkpointer_ctx = None
+        try:
+            if checkpointer_ctx is not None:
+                checkpointer_ctx.__exit__(None, None, None)
+                self.graph = self.workflow.compile()
+        finally:
+            budget_ctx = getattr(self, "_finnhub_budget_ctx", None)
+            self._finnhub_budget_ctx = None
+            if budget_ctx is not None:
+                budget_ctx.__exit__(None, None, None)
+            self._resuming = False
 
     @contextmanager
     def checkpoint_scope(self, company_name, trade_date, asset_type: str = "stock", portfolio=None):

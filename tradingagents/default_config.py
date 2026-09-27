@@ -20,6 +20,11 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_TEMPERATURE":          "temperature",
     "TRADINGAGENTS_LLM_MAX_RETRIES":      "llm_max_retries",
     "TRADINGAGENTS_MAX_TOKENS":           "max_tokens",
+    "FINNHUB_REQUESTS_PER_MINUTE":        "finnhub_requests_per_minute",
+    "FINNHUB_MAX_CALLS_PER_RUN":          "finnhub_max_calls_per_run",
+    "FINNHUB_MAX_CONCURRENCY":            "finnhub_max_concurrency",
+    "FINNHUB_CACHE_TTL_SECONDS":           "finnhub_cache_ttl_seconds",
+    "FINNHUB_HISTORICAL_CACHE_TTL_SECONDS": "finnhub_historical_cache_ttl_seconds",
     # Provider-specific reasoning/thinking knobs (None = each provider's own
     # default). Settable here for non-interactive runs; the CLI also offers an
     # interactive choice, which is skipped when the matching var is set.
@@ -57,7 +62,7 @@ def _coerce(value: str, reference):
 
 
 def _apply_env_overrides(config: dict) -> dict:
-    """Apply TRADINGAGENTS_* env vars to the config dict in-place."""
+    """Apply registered environment-variable overrides to the config in-place."""
     for env_var, key in _ENV_OVERRIDES.items():
         raw = os.environ.get(env_var)
         if raw is None or raw == "":
@@ -121,6 +126,13 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "news_article_limit": 20,             # max articles per ticker (ticker-news)
     "global_news_article_limit": 10,      # max articles for global/macro news
     "global_news_lookback_days": 7,       # macro news lookback window
+    # Finnhub free-plan safety defaults. Set the request allowance to the value
+    # shown in your Finnhub dashboard; 30/minute is deliberately conservative.
+    "finnhub_requests_per_minute": 30,
+    "finnhub_max_calls_per_run": 30,
+    "finnhub_max_concurrency": 2,
+    "finnhub_cache_ttl_seconds": 900,
+    "finnhub_historical_cache_ttl_seconds": 86400,
     # Search queries used by get_global_news for macro headlines. Extend or
     # replace to broaden geographic / sector coverage.
     "global_news_queries": [
@@ -139,13 +151,29 @@ DEFAULT_CONFIG = _apply_env_overrides({
         "core_stock_apis": "yfinance",       # Options: alpha_vantage, yfinance
         "technical_indicators": "yfinance",  # Options: alpha_vantage, yfinance
         "fundamental_data": "yfinance",      # Options: alpha_vantage, yfinance
-        "news_data": "yfinance",             # Options: alpha_vantage, yfinance
+        "news_data": "yfinance",             # Options: alpaca, finnhub, alpha_vantage, yfinance
         "macro_data": "fred",                # Options: fred (needs FRED_API_KEY)
         "prediction_markets": "polymarket",  # Options: polymarket (keyless)
     },
     # Tool-level configuration (takes precedence over category-level)
     "tool_vendors": {
         # Example: "get_stock_data": "alpha_vantage",  # Override category default
+        # Fetch both when Alpaca credentials are present; Yahoo remains available
+        # when Alpaca is unconfigured or temporarily unavailable.
+        "get_news": "alpaca,yfinance,finnhub",
+        "get_global_news": "yfinance,finnhub",
+        "get_fundamentals": "yfinance,finnhub",
+        "get_insider_transactions": "finnhub,yfinance",
+        "get_company_events": "finnhub",
+        "get_live_market_context": "finnhub",
+    },
+    # "fallback" returns the first successful vendor. "aggregate" calls every
+    # configured vendor and combines successful results with source labels.
+    "tool_vendor_modes": {
+        "get_news": "aggregate",
+        "get_global_news": "aggregate",
+        "get_fundamentals": "aggregate",
+        "get_insider_transactions": "aggregate",
     },
     # Benchmark for alpha calculation in the reflection layer.
     # ``benchmark_ticker`` (when set) overrides the suffix map for all

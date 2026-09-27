@@ -39,6 +39,25 @@ DEFAULT_LOOKBACK_DAYS = 365
 # daily series (yields, VIX) over a long window would otherwise flood context.
 MAX_ROWS = 40
 
+# Keep the calendar useful to a trading decision instead of flooding the model
+# with every administrative or weekly statistical release in FRED.
+MARKET_MOVING_RELEASE_TERMS = (
+    "consumer price",
+    "producer price",
+    "personal income and outlays",
+    "employment situation",
+    "job openings",
+    "unemployment insurance weekly claims",
+    "gross domestic product",
+    "advance monthly sales",
+    "industrial production",
+    "international trade",
+    "housing starts",
+    "new residential sales",
+    "consumer sentiment",
+    "manufacturing",
+)
+
 # Curated human-friendly aliases -> FRED series IDs. Anything not listed is used
 # verbatim as a raw FRED series ID, so power users are never limited to this set.
 MACRO_SERIES = {
@@ -278,3 +297,75 @@ def get_macro_data(
     )
 
     return header + summary + note + table
+
+
+def get_release_calendar(
+    curr_date: str,
+    look_ahead_days: int | None = None,
+) -> str:
+    """Return upcoming market-relevant FRED releases for a live analysis.
+
+    FRED exposes future dates only when releases without data are included. It
+    does not provide a reliable historical snapshot of what the future calendar
+    looked like on an old trading day, so historical runs withhold this source.
+    """
+    analysis_date = datetime.strptime(curr_date, "%Y-%m-%d").date()
+    today = datetime.strptime(_fred_today(), "%Y-%m-%d").date()
+    if analysis_date < today:
+        return (
+            f"FRED release calendar is withheld for {curr_date}. FRED exposes the "
+            "current release schedule without a reliable historical calendar vintage, "
+            "so serving it would leak future scheduling information into a backtest."
+        )
+    if analysis_date > today + timedelta(days=1):
+        raise ValueError(f"curr_date cannot be in the future for FRED: {curr_date}")
+
+    horizon = 14 if look_ahead_days is None else int(look_ahead_days)
+    if not 1 <= horizon <= 90:
+        raise ValueError("look_ahead_days must be between 1 and 90")
+    end_date = analysis_date + timedelta(days=horizon)
+
+    payload = _request(
+        "releases/dates",
+        {
+            # A live run in Sydney can be one date ahead of FRED's US-Central
+            # clock. Clamp the API boundary while retaining the caller's date
+            # for output filtering, matching the series-vintage safeguard.
+            "realtime_start": min(analysis_date, today).isoformat(),
+            "realtime_end": end_date.isoformat(),
+            "include_release_dates_with_no_data": "true",
+            "order_by": "release_date",
+            "sort_order": "asc",
+            "limit": 1000,
+        },
+    )
+    events = []
+    for item in payload.get("release_dates", []):
+        name = str(item.get("release_name") or "").strip()
+        date_text = str(item.get("date") or "")
+        try:
+            release_date = datetime.strptime(date_text, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if not analysis_date <= release_date <= end_date:
+            continue
+        if not any(term in name.lower() for term in MARKET_MOVING_RELEASE_TERMS):
+            continue
+        events.append((release_date, name, item.get("release_id")))
+
+    title = (
+        f"## Upcoming FRED economic releases ({curr_date} to {end_date.isoformat()})\n\n"
+        "Use these dates as event-risk context, not as a directional signal. FRED "
+        "release dates may differ from when observations become available and this "
+        "calendar does not replace the Federal Reserve's official FOMC calendar.\n\n"
+    )
+    if not events:
+        return title + "No selected market-moving FRED releases were found in this window."
+
+    lines = ["| Date | Days Until | Release | FRED Release ID |", "|---|---:|---|---:|"]
+    for release_date, name, release_id in events[:30]:
+        lines.append(
+            f"| {release_date.isoformat()} | {(release_date - analysis_date).days} | "
+            f"{name} | {release_id or ''} |"
+        )
+    return title + "\n".join(lines)

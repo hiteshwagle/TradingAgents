@@ -195,6 +195,69 @@ class FredFormattingTests(unittest.TestCase):
 
 
 @pytest.mark.unit
+class FredReleaseCalendarTests(unittest.TestCase):
+    def test_live_calendar_requests_future_dates_and_formats_market_events(self):
+        captured = {}
+
+        def _calendar(path, params):
+            captured["path"] = path
+            captured["params"] = params
+            return {
+                "release_dates": [
+                    {
+                        "release_id": 10,
+                        "release_name": "Consumer Price Index",
+                        "date": "2026-09-30",
+                    },
+                    {
+                        "release_id": 999,
+                        "release_name": "Minor Administrative Release",
+                        "date": "2026-09-29",
+                    },
+                ]
+            }
+
+        with mock.patch.object(fred, "_fred_today", return_value="2026-09-27"), \
+                mock.patch.object(fred, "_request", side_effect=_calendar):
+            out = fred.get_release_calendar("2026-09-27", 14)
+
+        self.assertEqual(captured["path"], "releases/dates")
+        self.assertEqual(captured["params"]["realtime_start"], "2026-09-27")
+        self.assertEqual(captured["params"]["realtime_end"], "2026-10-11")
+        self.assertEqual(captured["params"]["include_release_dates_with_no_data"], "true")
+        self.assertIn("Consumer Price Index", out)
+        self.assertIn("| 2026-09-30 | 3 |", out)
+        self.assertNotIn("Administrative", out)
+        self.assertIn("not as a directional signal", out)
+
+    def test_historical_calendar_is_withheld_without_request(self):
+        with mock.patch.object(fred, "_fred_today", return_value="2026-09-27"), \
+                mock.patch.object(fred, "_request") as request:
+            out = fred.get_release_calendar("2026-08-01")
+        request.assert_not_called()
+        self.assertIn("withheld", out)
+        self.assertIn("backtest", out)
+
+    def test_calendar_rejects_invalid_horizon(self):
+        with mock.patch.object(fred, "_fred_today", return_value="2026-09-27"), \
+                self.assertRaises(ValueError):
+            fred.get_release_calendar("2026-09-27", 0)
+
+    def test_live_calendar_clamps_a_one_day_timezone_lead(self):
+        captured = {}
+
+        def _capture(path, params):
+            captured.update(params)
+            return {"release_dates": []}
+
+        with mock.patch.object(fred, "_fred_today", return_value="2026-09-26"), \
+                mock.patch.object(fred, "_request", side_effect=_capture):
+            fred.get_release_calendar("2026-09-27", 7)
+        self.assertEqual(captured["realtime_start"], "2026-09-26")
+        self.assertEqual(captured["realtime_end"], "2026-10-04")
+
+
+@pytest.mark.unit
 class FredRoutingTests(unittest.TestCase):
     def setUp(self):
         config_module._config = copy.deepcopy(default_config.DEFAULT_CONFIG)
@@ -214,6 +277,21 @@ class FredRoutingTests(unittest.TestCase):
         ):
             out = router.route_to_vendor("get_macro_indicators", "cpi", "2026-06-01", 365)
         self.assertEqual(out, "MACRO_OK")
+
+    def test_release_calendar_routes_to_fred(self):
+        self.assertEqual(
+            router.get_category_for_method("get_macro_release_calendar"), "macro_data"
+        )
+        set_config({"data_vendors": {"macro_data": "fred"}})
+        with mock.patch.dict(
+            router.VENDOR_METHODS,
+            {"get_macro_release_calendar": {"fred": lambda *a, **k: "CALENDAR_OK"}},
+            clear=False,
+        ):
+            out = router.route_to_vendor(
+                "get_macro_release_calendar", "2026-09-27", 14
+            )
+        self.assertEqual(out, "CALENDAR_OK")
 
     def test_not_configured_degrades_gracefully(self):
         # macro_data is optional: with only fred and no key, the router degrades

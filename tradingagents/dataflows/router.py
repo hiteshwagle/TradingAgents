@@ -6,6 +6,7 @@ from tradingagents.dataflows.errors import (
     VendorNotConfiguredError,
     VendorRateLimitError,
 )
+from tradingagents.dataflows.vendors.alpaca import get_news as get_alpaca_news
 from tradingagents.dataflows.vendors.alpha_vantage import (
     get_balance_sheet as get_alpha_vantage_balance_sheet,
     get_cashflow as get_alpha_vantage_cashflow,
@@ -17,7 +18,18 @@ from tradingagents.dataflows.vendors.alpha_vantage import (
     get_news as get_alpha_vantage_news,
     get_stock as get_alpha_vantage_stock,
 )
-from tradingagents.dataflows.vendors.fred import get_macro_data as get_fred_macro_data
+from tradingagents.dataflows.vendors.finnhub import (
+    get_company_events as get_finnhub_company_events,
+    get_fundamentals as get_finnhub_fundamentals,
+    get_global_news as get_finnhub_global_news,
+    get_insider_transactions as get_finnhub_insider_transactions,
+    get_live_market_context as get_finnhub_live_market_context,
+    get_news as get_finnhub_news,
+)
+from tradingagents.dataflows.vendors.fred import (
+    get_macro_data as get_fred_macro_data,
+    get_release_calendar as get_fred_release_calendar,
+)
 from tradingagents.dataflows.vendors.polymarket import (
     get_prediction_markets as get_polymarket_prediction_markets,
 )
@@ -76,6 +88,7 @@ TOOLS_CATEGORIES = {
         "description": "Macroeconomic indicators (rates, inflation, labor, growth)",
         "tools": [
             "get_macro_indicators",
+            "get_macro_release_calendar",
         ]
     },
     "prediction_markets": {
@@ -83,13 +96,27 @@ TOOLS_CATEGORIES = {
         "tools": [
             "get_prediction_markets",
         ]
+    },
+    "company_events": {
+        "description": "Upcoming earnings and company event risk",
+        "tools": [
+            "get_company_events",
+        ]
+    },
+    "live_market_context": {
+        "description": "Current quote and exchange-session context",
+        "tools": [
+            "get_live_market_context",
+        ]
     }
 }
 
 VENDOR_LIST = [
     "yfinance",
+    "alpaca",
     "sec_edgar",
     "fred",
+    "finnhub",
     "polymarket",
     "alpha_vantage",
 ]
@@ -99,7 +126,12 @@ VENDOR_LIST = [
 # sentinel instead of aborting the run (a bad LLM-supplied indicator, a missing
 # key, or a network blip should not crash an analysis over flavour data). Core
 # categories (prices, fundamentals, news) still raise so a broken primary is loud.
-OPTIONAL_CATEGORIES = {"macro_data", "prediction_markets"}
+OPTIONAL_CATEGORIES = {
+    "company_events",
+    "live_market_context",
+    "macro_data",
+    "prediction_markets",
+}
 
 # Mapping of methods to their vendor-specific implementations
 VENDOR_METHODS = {
@@ -116,6 +148,7 @@ VENDOR_METHODS = {
     # fundamental_data
     "get_fundamentals": {
         "alpha_vantage": get_alpha_vantage_fundamentals,
+        "finnhub": get_finnhub_fundamentals,
         "yfinance": get_yfinance_fundamentals,
     },
     "get_balance_sheet": {
@@ -135,24 +168,39 @@ VENDOR_METHODS = {
     },
     # news_data
     "get_news": {
+        "alpaca": get_alpaca_news,
         "alpha_vantage": get_alpha_vantage_news,
+        "finnhub": get_finnhub_news,
         "yfinance": get_news_yfinance,
     },
     "get_global_news": {
         "yfinance": get_global_news_yfinance,
         "alpha_vantage": get_alpha_vantage_global_news,
+        "finnhub": get_finnhub_global_news,
     },
     "get_insider_transactions": {
         "alpha_vantage": get_alpha_vantage_insider_transactions,
+        "finnhub": get_finnhub_insider_transactions,
         "yfinance": get_yfinance_insider_transactions,
     },
     # macro_data
     "get_macro_indicators": {
         "fred": get_fred_macro_data,
     },
+    "get_macro_release_calendar": {
+        "fred": get_fred_release_calendar,
+    },
     # prediction_markets
     "get_prediction_markets": {
         "polymarket": get_polymarket_prediction_markets,
+    },
+    # company_events
+    "get_company_events": {
+        "finnhub": get_finnhub_company_events,
+    },
+    # live_market_context
+    "get_live_market_context": {
+        "finnhub": get_finnhub_live_market_context,
     },
 }
 
@@ -181,10 +229,21 @@ def get_vendor(category: str, method: str = None) -> str:
     return config.get("data_vendors", {}).get(category, "default")
 
 
+def get_vendor_mode(method: str) -> str:
+    """Return whether a tool uses its vendors as fallbacks or aggregates them."""
+    mode = get_config().get("tool_vendor_modes", {}).get(method, "fallback")
+    if mode not in {"fallback", "aggregate"}:
+        raise ValueError(
+            f"Invalid vendor mode {mode!r} for {method!r}; expected 'fallback' or 'aggregate'."
+        )
+    return mode
+
+
 def route_to_vendor(method: str, *args, **kwargs):
-    """Route method calls to appropriate vendor implementation with fallback support."""
+    """Route a method through its configured fallback or aggregation chain."""
     category = get_category_for_method(method)
     vendor_config = get_vendor(category, method)
+    vendor_mode = get_vendor_mode(method)
     primary_vendors = [v.strip() for v in vendor_config.split(',')]
 
     if method not in VENDOR_METHODS:
@@ -211,12 +270,17 @@ def route_to_vendor(method: str, *args, **kwargs):
     last_no_data: NoMarketDataError | None = None
     last_unavailable: VendorRateLimitError | None = None
     first_error: Exception | None = None
+    vendor_results: list[tuple[str, object]] = []
     for vendor in vendor_chain:
         vendor_impl = VENDOR_METHODS[method][vendor]
         impl_func = vendor_impl[0] if isinstance(vendor_impl, list) else vendor_impl
 
         try:
-            return impl_func(*args, **kwargs)
+            result = impl_func(*args, **kwargs)
+            if vendor_mode == "aggregate":
+                vendor_results.append((vendor, result))
+                continue
+            return result
         except VendorRateLimitError as e:
             logger.warning("Vendor %r unavailable for %s: %s; trying next vendor.", vendor, method, e)
             # Kept so an all-unavailable chain can say the vendor was the
@@ -239,6 +303,12 @@ def route_to_vendor(method: str, *args, **kwargs):
             if first_error is None:
                 first_error = e
             continue
+
+    if vendor_results:
+        sections = ["## Aggregated vendor results"]
+        for vendor, result in vendor_results:
+            sections.extend(("", f"Source vendor: {vendor}", "", str(result)))
+        return "\n".join(sections)
 
     # If any vendor reported "no data", the symbol is genuinely unavailable.
     # Return one explicit, instructive sentinel rather than a vendor-specific

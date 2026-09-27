@@ -20,7 +20,11 @@ def _blank_settings_overlay():
     for filename in (".env", ".env.enterprise"):
         names |= set(dotenv_values(find_dotenv(filename, usecwd=True)))
     for name in names:
-        if name.startswith("TRADINGAGENTS_") or name == "X_BEARER_TOKEN":
+        if (
+            name.startswith("TRADINGAGENTS_")
+            or name.startswith("FINNHUB_")
+            or name == "X_BEARER_TOKEN"
+        ):
             os.environ[name] = ""
 
 
@@ -60,6 +64,7 @@ _API_KEY_ENV_VARS = (
     "OPENROUTER_API_KEY",
     "AZURE_OPENAI_API_KEY",
     "ALPHA_VANTAGE_API_KEY",
+    "FINNHUB_API_KEY",
 )
 
 
