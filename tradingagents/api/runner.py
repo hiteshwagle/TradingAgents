@@ -58,13 +58,19 @@ def build_result(request: AnalysisRequest, state: dict, signal: str, report_path
         "sentiment": str(state.get("sentiment_report") or ""),
         "news": str(state.get("news_report") or ""),
         "fundamentals": str(state.get("fundamentals_report") or ""),
+        "macro": str(state.get("macro_report") or ""),
     }
     investment_debate = state.get("investment_debate_state") or {}
     risk_debate = state.get("risk_debate_state") or {}
     debates = {
         "investment": str(investment_debate.get("history") or ""),
+        "investment_bull": str(investment_debate.get("bull_history") or ""),
+        "investment_bear": str(investment_debate.get("bear_history") or ""),
         "investment_judgement": str(investment_debate.get("judge_decision") or ""),
         "risk": str(risk_debate.get("history") or ""),
+        "risk_aggressive": str(risk_debate.get("aggressive_history") or ""),
+        "risk_conservative": str(risk_debate.get("conservative_history") or ""),
+        "risk_neutral": str(risk_debate.get("neutral_history") or ""),
         "risk_judgement": str(risk_debate.get("judge_decision") or ""),
     }
 

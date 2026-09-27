@@ -69,7 +69,7 @@ def create_app(
     )
     def capabilities() -> CapabilitiesResponse:
         return CapabilitiesResponse(
-            analysts=["market", "social", "news", "fundamentals"],
+            analysts=["market", "social", "news", "fundamentals", "macro"],
             asset_types=["stock", "crypto"],
             ratings=list(RATINGS_5_TIER),
         )

@@ -56,11 +56,15 @@ MACRO_SERIES = {
     "core_cpi": "CPILFESL",
     "pce": "PCEPI",
     "core_pce": "PCEPILFE",
+    "ppi": "PPIACO",
+    "producer_price_index": "PPIACO",
     "inflation_expectations": "T10YIE",
     # Growth & output
     "real_gdp": "GDPC1",
     "gdp": "GDP",
     "industrial_production": "INDPRO",
+    "manufacturing_pmi": "NAPM",
+    "pmi": "NAPM",
     # Labor
     "unemployment_rate": "UNRATE",
     "unemployment": "UNRATE",
@@ -74,6 +78,7 @@ MACRO_SERIES = {
     "dollar_index": "DTWEXBGS",
     # Sentiment & housing
     "consumer_sentiment": "UMCSENT",
+    "consumer_confidence": "CSCICP03USM665S",
     "housing_starts": "HOUST",
     "retail_sales": "RSAFS",
 }

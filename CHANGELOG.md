@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Changes that need action when upgrading are listed first in their release.
 
+## [Unreleased]
+
+### Added
+
+- **Dedicated Macro Analyst.** A first-class `macro` graph/API/CLI analyst uses
+  point-in-time FRED indicators, global macro news, Polymarket probabilities,
+  and instrument news. Its report is included in research and risk debates,
+  persisted as `1_analysts/macro.md`, and returned as `reports.macro` by the API.
+- **Explicit Certifi verification for all project-owned HTTP clients.** FRED,
+  SEC EDGAR, Polymarket, and Jev now join StockTwits, Reddit, and X in passing
+  Certifi's CA bundle explicitly to `requests`.
+
 ## [0.5.1] — 2026-09-24
 
 A package layout organised by what each module holds, social posts screened by

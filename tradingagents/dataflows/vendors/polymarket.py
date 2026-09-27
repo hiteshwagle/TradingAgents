@@ -13,6 +13,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
+import certifi
 import requests
 
 from tradingagents.dataflows.date_window import get_current_date
@@ -30,7 +31,10 @@ DEFAULT_LIMIT = 6
 
 def _request(path: str, params: dict) -> dict:
     response = requests.get(
-        f"{GAMMA_BASE}/{path}", params=params, timeout=REQUEST_TIMEOUT
+        f"{GAMMA_BASE}/{path}",
+        params=params,
+        timeout=REQUEST_TIMEOUT,
+        verify=certifi.where(),
     )
     response.raise_for_status()
     return response.json()

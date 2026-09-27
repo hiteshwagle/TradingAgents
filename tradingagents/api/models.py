@@ -12,7 +12,7 @@ from tradingagents.dataflows.date_window import get_current_date
 from tradingagents.dataflows.symbols import normalize_symbol, safe_ticker_component
 from tradingagents.portfolio import PortfolioContext
 
-AnalystName = Literal["market", "social", "news", "fundamentals"]
+AnalystName = Literal["market", "social", "news", "fundamentals", "macro"]
 AssetType = Literal["stock", "crypto"]
 
 
@@ -31,7 +31,7 @@ class AnalysisRequest(BaseModel):
     trade_date: date = Field(default_factory=lambda: date.fromisoformat(get_current_date()))
     asset_type: AssetType = "stock"
     analysts: list[AnalystName] = Field(
-        default_factory=lambda: ["market", "social", "news", "fundamentals"],
+        default_factory=lambda: ["market", "social", "news", "fundamentals", "macro"],
         min_length=1,
     )
     portfolio: PortfolioContext | None = None

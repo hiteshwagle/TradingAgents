@@ -17,6 +17,7 @@ import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import certifi
 import requests
 
 from tradingagents.agents.context import resolve_instrument_identity
@@ -83,7 +84,13 @@ def system_one(state, questions: dict) -> dict[str, dict]:
             time.sleep(retry_after if retry_after is not None else backoff * random.uniform(0.8, 1.2))
             backoff *= 2
         try:
-            response = requests.post(_URL, json=body, headers=headers, timeout=_TIMEOUT)
+            response = requests.post(
+                _URL,
+                json=body,
+                headers=headers,
+                timeout=_TIMEOUT,
+                verify=certifi.where(),
+            )
         except requests.RequestException as exc:
             failure, retry_after = type(exc).__name__, None
             if isinstance(exc, _TRANSIENT):

@@ -25,6 +25,7 @@ from datetime import date, datetime
 from importlib import metadata
 from pathlib import Path
 
+import certifi
 import requests
 
 from tradingagents.dataflows.config import get_config
@@ -107,7 +108,12 @@ def _version() -> str:
 def _fetch_json(url: str) -> dict:
     """Read a public EDGAR document, respecting SEC's identification rule."""
     try:
-        response = requests.get(url, headers={"User-Agent": _user_agent()}, timeout=30)
+        response = requests.get(
+            url,
+            headers={"User-Agent": _user_agent()},
+            timeout=30,
+            verify=certifi.where(),
+        )
         response.raise_for_status()
         return response.json()
     except requests.RequestException as exc:

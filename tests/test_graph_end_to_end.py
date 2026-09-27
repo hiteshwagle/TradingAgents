@@ -129,6 +129,7 @@ def test_a_full_run_reaches_a_logged_decision(tmp_path, monkeypatch, offline, st
 
     assert signal == "Overweight"
     for key in ("market_report", "sentiment_report", "news_report", "fundamentals_report",
+                "macro_report",
                 "investment_plan", "trader_investment_plan", "final_trade_decision"):
         assert state[key].strip(), key
     tool_methods = {"get_stock_data", "get_indicators", "get_news", "get_global_news",

@@ -131,7 +131,7 @@ def run_backtest(
     config: dict,
     asset_type: str = "stock",
     portfolio=None,
-    selected_analysts=("market", "social", "news", "fundamentals"),
+    selected_analysts=("market", "social", "news", "fundamentals", "macro"),
     run_id: str | None = None,
 ) -> BacktestResult:
     """Analyze every ticker on every date, into a decision log of this run's own.

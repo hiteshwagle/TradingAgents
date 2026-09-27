@@ -32,7 +32,11 @@ def test_api_requires_configured_key():
     client, manager = _client()
     try:
         assert client.get("/v1/capabilities").status_code == 401
-        assert client.get("/v1/capabilities", headers={"X-API-Key": "secret"}).status_code == 200
+        capabilities = client.get(
+            "/v1/capabilities", headers={"X-API-Key": "secret"}
+        )
+        assert capabilities.status_code == 200
+        assert "macro" in capabilities.json()["analysts"]
         assert client.get("/v1/health").status_code == 200
     finally:
         manager.shutdown()
@@ -75,10 +79,33 @@ def test_analysis_job_returns_structured_json():
         manager.shutdown()
 
 
+def test_api_accepts_macro_as_a_dedicated_analyst():
+    request = AnalysisRequest(
+        symbol="AAPL",
+        trade_date=date(2026, 9, 1),
+        analysts=["macro"],
+    )
+    assert request.analysts == ["macro"]
+
+
 def test_build_result_extracts_execution_fields_and_sources():
     request = AnalysisRequest(symbol="AAPL", trade_date=date(2026, 9, 1), analysts=["market"])
     state = {
         "market_report": "Evidence: https://example.com/aapl",
+        "macro_report": "Macro evidence: https://example.com/macro",
+        "investment_debate_state": {
+            "history": "combined investment debate",
+            "bull_history": "bull case",
+            "bear_history": "bear case",
+            "judge_decision": "research judgement",
+        },
+        "risk_debate_state": {
+            "history": "combined risk debate",
+            "aggressive_history": "aggressive case",
+            "conservative_history": "conservative case",
+            "neutral_history": "neutral case",
+            "judge_decision": "risk judgement",
+        },
         "trader_investment_plan": """**Action**: Buy
 **Entry Price**: 220.50
 **Stop Loss**: 210
@@ -92,4 +119,7 @@ def test_build_result_extracts_execution_fields_and_sources():
     assert result.recommendation.entry_price == 220.5
     assert result.recommendation.stop_loss == 210
     assert result.recommendation.price_target == 250
-    assert result.source_urls == ["https://example.com/aapl"]
+    assert result.debates["investment_bull"] == "bull case"
+    assert result.debates["risk_conservative"] == "conservative case"
+    assert result.reports["macro"].startswith("Macro evidence")
+    assert result.source_urls == ["https://example.com/aapl", "https://example.com/macro"]

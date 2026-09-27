@@ -78,7 +78,8 @@ Our framework decomposes complex trading tasks into specialized roles.
 ### Analyst Team
 - Fundamentals Analyst: Evaluates company financials and performance metrics, identifying intrinsic values and potential red flags.
 - Sentiment Analyst: Aggregates news headlines, StockTwits, X Posts, and Reddit chatter into a single sentiment read to gauge short-term market mood.
-- News Analyst: Monitors global news and macroeconomic indicators, interpreting the impact of events on market conditions.
+- News Analyst: Monitors company, sector, global-market, and geopolitical news, interpreting confirmed catalysts and risks.
+- Macro Analyst: Separately evaluates rates, inflation, growth, liquidity, Treasury yields, global macro news, and forward-looking event probabilities for stocks and crypto.
 - Technical Analyst: Utilizes technical indicators (like MACD and RSI) to detect trading patterns and forecast price movements.
 
 <p align="center">
@@ -205,7 +206,8 @@ posts = result["posts"]
 
 With `TYPESAFE_API_KEY` set, the Sentiment Analyst screens StockTwits, X, and Reddit posts with TypeSafe's Jev before reading them. Posts that are not about the company are dropped, and each source opens with a count of the remaining posts by stance: bullish, bearish, neutral, or unclear. Without the key, posts pass through unscreened. `jev-latest` moves with new releases; set `TYPESAFE_DEFAULT_MODEL` to a versioned ID such as `jev-1.13.0` to hold it fixed across runs.
 
-StockTwits, Reddit, and X HTTPS requests use `requests` with certificate
+Project-owned HTTPS requests—including StockTwits, Reddit, X, FRED, SEC EDGAR,
+Polymarket, and Jev—use `requests` with certificate
 verification enabled against Certifi's current CA bundle. This avoids relying on
 an incomplete operating-system or Python `urllib` trust store; TLS verification
 is never disabled.
@@ -314,15 +316,18 @@ curl -X POST http://127.0.0.1:8000/v1/analyses \
     "symbol": "AAPL",
     "trade_date": "2026-09-01",
     "asset_type": "stock",
-    "analysts": ["market", "social", "news", "fundamentals"],
+    "analysts": ["market", "social", "news", "fundamentals", "macro"],
     "options": {"max_debate_rounds": 1, "max_risk_rounds": 1}
   }'
 ```
 
 The response contains an `analysis_id`. Poll
 `GET /v1/analyses/{analysis_id}` until its status is `completed`; the result is
-JSON with the final rating, trader entry/stop fields, reports, debates, and source
-URLs. `GET /v1/analyses/{analysis_id}/events` returns job progress and
+JSON with the final rating, trader entry/stop fields, reports (including the
+dedicated `reports.macro` output when selected), debates, and source
+URLs. Debate output includes the combined histories and the individual bull,
+bear, aggressive, conservative, and neutral histories. `GET
+/v1/analyses/{analysis_id}/events` returns job progress and
 `POST /v1/analyses/{analysis_id}/cancel` requests cancellation. Other discovery
 endpoints are `GET /v1/health` and `GET /v1/capabilities`.
 

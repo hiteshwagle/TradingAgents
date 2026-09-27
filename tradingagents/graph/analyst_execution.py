@@ -1,7 +1,12 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from tradingagents.agents.analysts import fundamentals_analyst, market_analyst, news_analyst
+from tradingagents.agents.analysts import (
+    fundamentals_analyst,
+    macro_analyst,
+    market_analyst,
+    news_analyst,
+)
 
 
 @dataclass(frozen=True)
@@ -53,6 +58,13 @@ ANALYST_NODE_SPECS: dict[str, AnalystNodeSpec] = {
         report_key="fundamentals_report",
         tools=fundamentals_analyst.TOOLS,
     ),
+    "macro": AnalystNodeSpec(
+        key="macro",
+        agent_node="Macro Analyst",
+        clear_node="Msg Clear Macro",
+        report_key="macro_report",
+        tools=macro_analyst.TOOLS,
+    ),
 }
 
 
@@ -70,5 +82,4 @@ def build_analyst_execution_plan(
         raise ValueError("at least one analyst must be selected")
 
     return AnalystExecutionPlan(specs=specs)
-
 

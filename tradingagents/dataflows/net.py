@@ -1,5 +1,6 @@
 """HTTP helpers shared by the vendors."""
 
+import certifi
 import requests
 
 
@@ -15,7 +16,12 @@ def get_scrubbed(url: str, *, params: dict, timeout: float, secret: str, passthr
     Statuses in ``passthrough`` are returned for the caller to handle.
     """
     try:
-        response = requests.get(url, params=params, timeout=timeout)
+        response = requests.get(
+            url,
+            params=params,
+            timeout=timeout,
+            verify=certifi.where(),
+        )
         if response.status_code not in passthrough:
             response.raise_for_status()
         return response
@@ -31,7 +37,12 @@ def vendor_reachable(url: str, timeout: float = 5.0) -> bool:
     cases indistinguishable. Called only when a result is empty.
     """
     try:
-        requests.head(url, timeout=timeout, allow_redirects=True)
+        requests.head(
+            url,
+            timeout=timeout,
+            allow_redirects=True,
+            verify=certifi.where(),
+        )
         return True
     except requests.RequestException:
         return False
