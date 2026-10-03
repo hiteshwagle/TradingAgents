@@ -137,11 +137,13 @@ def test_formatted_posts_are_screened_and_ordered_by_score(monkeypatch):
         return [True, False], "Screened by Jev: 1 of 2 Posts retained."
 
     monkeypatch.setattr(x_posts, "search_symbol_posts", search)
+    end_day = date.today() - timedelta(days=1)
+    start_day = end_day - timedelta(days=6)
     output = x_posts.fetch_x_posts(
         "NVDA",
         "NVIDIA",
-        start_date="2026-09-19",
-        end_date="2026-09-25",
+        start_date=start_day.isoformat(),
+        end_date=end_day.isoformat(),
         screen=screen,
     )
 
@@ -158,6 +160,30 @@ def test_formatted_posts_are_screened_and_ordered_by_score(monkeypatch):
 def test_formatted_fetch_is_optional_without_token(monkeypatch):
     monkeypatch.delenv("X_BEARER_TOKEN", raising=False)
     assert x_posts.fetch_x_posts("NVDA") == "<X unavailable: X_BEARER_TOKEN is not set>"
+
+
+@pytest.mark.unit
+def test_historical_validation_can_disable_x_without_a_call(monkeypatch):
+    monkeypatch.setenv("X_BEARER_TOKEN", "secret-token")
+    monkeypatch.setattr(
+        x_posts, "search_symbol_posts",
+        lambda *args, **kwargs: pytest.fail("disabled X mode must not make a request"),
+    )
+    assert x_posts.fetch_x_posts("AAPL", mode="disabled") == (
+        "<X disabled for this historical validation>"
+    )
+
+
+@pytest.mark.unit
+def test_old_recent_window_is_skipped_without_a_call(monkeypatch):
+    monkeypatch.setenv("X_BEARER_TOKEN", "secret-token")
+    monkeypatch.setattr(
+        x_posts, "search_symbol_posts",
+        lambda *args, **kwargs: pytest.fail("old recent-search window must be skipped"),
+    )
+    assert "outside recent-search retention" in x_posts.fetch_x_posts(
+        "AAPL", start_date="2025-09-01", end_date="2025-09-07", mode="recent"
+    )
 
 
 @pytest.mark.unit

@@ -1,4 +1,18 @@
 services:
+  api:
+    build: .
+    entrypoint: ["tradingagents-api"]
+    env_file:
+      - .env
+    environment:
+      TRADINGAGENTS_API_HOST: 0.0.0.0
+      TRADINGAGENTS_API_DB_PATH: /home/appuser/.tradingagents/api_jobs.sqlite3
+    ports:
+      - "127.0.0.1:${TRADINGAGENTS_API_PORT:-8000}:8000"
+    volumes:
+      - tradingagents_data:/home/appuser/.tradingagents
+    restart: unless-stopped
+
   tradingagents:
     build: .
     env_file:

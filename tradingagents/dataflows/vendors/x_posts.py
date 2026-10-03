@@ -16,7 +16,7 @@ import os
 import random
 import re
 import time
-from datetime import date, datetime, time as datetime_time, timezone
+from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from pathlib import Path
 
 import certifi
@@ -220,12 +220,11 @@ def search_recent_posts(
     end_time: str | None = None,
     bearer_token: str | None = None,
     use_cache: bool = True,
+    cache_only: bool = False,
     cache_ttl_seconds: int | None = None,
 ) -> dict:
     """Return a JSON-serializable collection of recent X Posts."""
     token = bearer_token or os.getenv("X_BEARER_TOKEN")
-    if not token:
-        raise XAPIError("X_BEARER_TOKEN is not set")
 
     resolved_limit = (
         limit if limit is not None else _positive_int_env("X_POST_LIMIT_PER_SYMBOL", DEFAULT_LIMIT)
@@ -258,6 +257,11 @@ def search_recent_posts(
             ]
             cached["count"] = len(cached["posts"])
             return cached
+
+    if cache_only:
+        raise XAPIError("No matching X response is available in the local cache")
+    if not token:
+        raise XAPIError("X_BEARER_TOKEN is not set")
 
     response = _request_json(params, token)
     posts = response.get("data") or []
@@ -328,19 +332,33 @@ def fetch_x_posts(
     start_date: str | None = None,
     end_date: str | None = None,
     screen=None,
+    mode: str = "recent",
 ) -> str:
     """Return recent X Posts as a prompt-ready, score-ordered text block."""
-    if not os.getenv("X_BEARER_TOKEN"):
+    if mode not in {"disabled", "recent", "cache_only"}:
+        return "<X unavailable: unsupported X access mode>"
+    if mode == "disabled":
+        return "<X disabled for this historical validation>"
+    if mode != "cache_only" and not os.getenv("X_BEARER_TOKEN"):
         return "<X unavailable: X_BEARER_TOKEN is not set>"
 
     try:
         start_time, end_time = _date_bounds(start_date, end_date)
+        # Recent search cannot reconstruct an old historical window. Skip the
+        # network request instead of spending quota on a request that cannot
+        # produce point-in-time evidence. A matching saved response remains
+        # usable in cache-only mode.
+        if mode == "recent" and end_date:
+            end_day = datetime.strptime(end_date, "%Y-%m-%d").date()
+            if end_day < date.today() - timedelta(days=7):
+                return "<X unavailable: selected date is outside recent-search retention>"
         result = search_symbol_posts(
             ticker,
             company_name,
             limit=limit,
             start_time=start_time,
             end_time=end_time,
+            cache_only=mode == "cache_only",
         )
     except (XAPIError, ValueError) as exc:
         detail = _safe_error_message(exc)

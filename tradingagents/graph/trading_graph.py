@@ -99,6 +99,7 @@ class TradingAgentsGraph:
             self.quick_thinking_llm,
             self.deep_thinking_llm,
             self.conditional_logic,
+            self.config,
         )
 
         self.propagator = Propagator(

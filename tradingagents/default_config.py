@@ -82,6 +82,9 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # the oldest resolved entries are pruned once this limit is exceeded.
     # Pending entries are never pruned. None disables rotation entirely.
     "memory_log_max_entries": None,
+    # X is a current/recent source. Historical validation can override this
+    # per run without changing the server process environment.
+    "x_posts_mode": "recent",
     # LLM settings
     "llm_provider": "openai",
     "deep_think_llm": "gpt-6-sol",

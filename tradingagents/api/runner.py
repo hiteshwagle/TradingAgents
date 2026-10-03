@@ -114,6 +114,8 @@ class AnalysisRunner:
             config["output_language"] = options.output_language
         if options.checkpoint_enabled is not None:
             config["checkpoint_enabled"] = options.checkpoint_enabled
+        if options.x_posts_mode is not None:
+            config["x_posts_mode"] = options.x_posts_mode
 
         graph = TradingAgentsGraph(
             selected_analysts=request.analysts,

@@ -45,6 +45,10 @@ def create_llm_client(
         from .azure_client import AzureOpenAIClient
         return AzureOpenAIClient(model, base_url, **kwargs)
 
+    if provider_lower == "azure_responses":
+        from .azure_responses_client import AzureResponsesOpenAIClient
+        return AzureResponsesOpenAIClient(model, base_url, **kwargs)
+
     if provider_lower == "bedrock":
         from .bedrock_client import BedrockClient
         return BedrockClient(model, base_url, **kwargs)
@@ -97,7 +101,7 @@ def build_llm_kwargs(config: dict) -> dict[str, Any]:
         if thinking_level:
             kwargs["thinking_level"] = thinking_level
 
-    elif provider == "openai":
+    elif provider in {"openai", "azure_responses"}:
         reasoning_effort = config.get("openai_reasoning_effort")
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort

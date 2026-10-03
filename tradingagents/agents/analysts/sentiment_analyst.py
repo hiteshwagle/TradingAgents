@@ -46,7 +46,7 @@ def _seven_days_back(trade_date: str) -> str:
     return (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
 
 
-def create_sentiment_analyst(llm):
+def create_sentiment_analyst(llm, x_posts_mode="recent"):
     """Create a sentiment analyst node for the trading graph.
 
     Pre-fetches news + StockTwits + X + Reddit data, injects them into the
@@ -74,7 +74,7 @@ def create_sentiment_analyst(llm):
         )
         company_name = (
             resolve_instrument_identity(ticker).get("company_name")
-            if os.getenv("X_BEARER_TOKEN")
+            if os.getenv("X_BEARER_TOKEN") or x_posts_mode == "cache_only"
             else None
         )
         x_block = fetch_x_posts(
@@ -83,6 +83,7 @@ def create_sentiment_analyst(llm):
             start_date=start_date,
             end_date=end_date,
             screen=screen,
+            mode=x_posts_mode,
         )
         reddit_block = fetch_reddit_posts(ticker, start_date=start_date, end_date=end_date, screen=screen)
 

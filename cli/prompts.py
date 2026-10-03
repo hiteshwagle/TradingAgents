@@ -268,7 +268,7 @@ def _select_model(provider: str, mode: str, default=None) -> str:
     if provider.lower() == "openrouter":
         return select_openrouter_model(mode)
 
-    if provider.lower() == "azure":
+    if provider.lower() in {"azure", "azure_responses"}:
         return _require_text(
             f"Enter Azure deployment name ({mode}-thinking):",
             "Please enter a deployment name.",
@@ -338,6 +338,7 @@ def _llm_provider_table() -> list[tuple[str, str, str | None]]:
         ("Groq", "groq", "https://api.groq.com/openai/v1"),
         ("NVIDIA NIM", "nvidia", "https://integrate.api.nvidia.com/v1"),
         ("Azure OpenAI", "azure", None),
+        ("Azure OpenAI (Responses API)", "azure_responses", None),
         ("Amazon Bedrock", "bedrock", None),
         ("Ollama", "ollama", ollama_url),
         ("OpenAI-compatible (vLLM, LM Studio, llama.cpp, custom relay)", "openai_compatible", None),

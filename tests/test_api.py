@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import time
 from datetime import date
 
@@ -79,6 +80,52 @@ def test_analysis_job_returns_structured_json():
         manager.shutdown()
 
 
+def test_completed_job_survives_restart():
+    with tempfile.TemporaryDirectory() as directory:
+        path = f"{directory}/jobs.sqlite3"
+        manager = AnalysisJobManager(
+            runner=FakeRunner(), max_workers=1, max_jobs=10, persistence_path=path
+        )
+        job = manager.submit(AnalysisRequest(symbol="AAPL", trade_date=date(2026, 9, 1)))
+        for _ in range(100):
+            response = manager.get(job.analysis_id)
+            if response.status.value == "completed":
+                break
+            time.sleep(0.01)
+        manager.shutdown()
+
+        restarted = AnalysisJobManager(
+            runner=FakeRunner(), max_workers=1, max_jobs=10, persistence_path=path
+        )
+        try:
+            restored = restarted.get(job.analysis_id)
+            assert restored.status.value == "completed"
+            assert restored.result.symbol == "AAPL"
+        finally:
+            restarted.shutdown()
+
+
+def test_scanner_endpoint_requires_auth_and_validates_bounds(monkeypatch):
+    client, manager = _client()
+    monkeypatch.setattr(
+        "tradingagents.scanner.MarketScanner.scan",
+        lambda self: {"schema_version": "1.0", "candidates": []},
+    )
+    try:
+        assert client.post("/v1/scanner/scan", json={"top_n": 5}).status_code == 401
+        response = client.post(
+            "/v1/scanner/scan", headers={"X-API-Key": "secret"}, json={"top_n": 5}
+        )
+        assert response.status_code == 200
+        assert response.json()["schema_version"] == "1.0"
+        invalid = client.post(
+            "/v1/scanner/scan", headers={"X-API-Key": "secret"}, json={"top_n": 500}
+        )
+        assert invalid.status_code == 422
+    finally:
+        manager.shutdown()
+
+
 def test_api_accepts_macro_as_a_dedicated_analyst():
     request = AnalysisRequest(
         symbol="AAPL",
@@ -86,6 +133,14 @@ def test_api_accepts_macro_as_a_dedicated_analyst():
         analysts=["macro"],
     )
     assert request.analysts == ["macro"]
+
+
+def test_api_accepts_bounded_x_mode_for_historical_validation():
+    request = AnalysisRequest(
+        symbol="AAPL", trade_date=date(2026, 9, 1), analysts=["social"],
+        options={"x_posts_mode": "disabled"},
+    )
+    assert request.options.x_posts_mode == "disabled"
 
 
 def test_build_result_extracts_execution_fields_and_sources():

@@ -180,7 +180,15 @@ export X_BEARER_TOKEN=...          # X recent-Post search (optional, usage-bille
 export TYPESAFE_API_KEY=...        # Jev social-post screening (optional)
 ```
 
-For Azure OpenAI, copy `.env.enterprise.example` to `.env.enterprise` and fill in your credentials.
+For Azure OpenAI, copy `.env.enterprise.example` to `.env.enterprise` and fill
+in your credentials. Use `llm_provider: "azure_responses"` for models such as
+GPT-6.1 Sol that require the Responses API for tool calling. This dedicated
+adapter sets `use_responses_api=True`, disables server-side response storage,
+and accepts `AZURE_OPENAI_API_VERSION` (with `OPENAI_API_VERSION` as a legacy
+fallback). Keep `AZURE_OPENAI_ENDPOINT` at the resource root, for example
+`https://your-resource.openai.azure.com/`, rather than the full
+`/openai/responses` request URL. The original `azure` provider remains available
+for existing Chat Completions deployments.
 
 For AWS Bedrock, install the extra with `pip install ".[bedrock]"`, set `llm_provider: "bedrock"`, configure AWS credentials (environment variables, `~/.aws/credentials`, or an IAM role) and `AWS_DEFAULT_REGION`, and use a Bedrock model ID, e.g. `us.anthropic.claude-opus-4-8-v1:0`.
 
@@ -189,6 +197,11 @@ For local models, configure Ollama with `llm_provider: "ollama"`. The default en
 For any other OpenAI-compatible server (vLLM, LM Studio, llama.cpp, or a custom relay), use `llm_provider: "openai_compatible"` and set the endpoint via `backend_url` (or `TRADINGAGENTS_LLM_BACKEND_URL`), e.g. `http://localhost:8000/v1` for vLLM or `http://localhost:1234/v1` for LM Studio. The model is whatever your server serves. No key is needed for local servers; set `OPENAI_COMPATIBLE_API_KEY` when the endpoint requires one.
 
 With `X_BEARER_TOKEN` set, the Sentiment Analyst adds recent X Posts matching the ticker/company and market-event terms (earnings, revenue, guidance, acquisitions, partnerships, SEC activity, upgrades, and downgrades). The client follows X's current recent-search contract (`post.fields`, with `author_id` requested as an expansion) and orders Posts by `likes + 2×reposts + replies` using X's `repost_count` metric. It also accepts the former `retweet_count` name in existing cache files. HTTPS requests use `requests` with the CA bundle supplied explicitly by `certifi`. That score measures attention, not sentiment or credibility. Set `X_POST_LIMIT_PER_SYMBOL` (default `20`) and `X_CACHE_TTL_SECONDS` (default `86400`) to control usage. The recent-search endpoint is for live/recent analysis and may not cover an older backtest date. Without the token, the X source is marked unavailable and the run continues. API failures include a sanitized status/reason in the report and terminal log; the bearer token is redacted.
+
+API callers may set `options.x_posts_mode` to `disabled`, `recent`, or
+`cache_only`. `disabled` makes no X request, `cache_only` accepts only an exact
+local cached response, and `recent` automatically skips historical windows older
+than seven days instead of spending quota on an unsupported recent-search call.
 
 Query the same packaged client directly as JSON:
 
@@ -388,11 +401,44 @@ bear, aggressive, conservative, and neutral histories. `GET
 endpoints are `GET /v1/health` and `GET /v1/capabilities`.
 
 The API performs analysis only and never sends broker orders. LLM/data credentials,
-provider endpoints, and output paths remain server-side. Jobs are currently kept in
-process memory, so restarting the server clears API job status; generated reports
-and normal TradingAgents logs remain on disk. One worker is the safe default because
+provider endpoints, and output paths remain server-side. Jobs use process memory by
+default; configure the SQLite journal below to retain terminal status across restarts.
+Generated reports and normal TradingAgents logs remain on disk. One worker is the safe default because
 each analysis is resource-intensive; tune `TRADINGAGENTS_API_WORKERS` only after
 validating provider rate limits and storage concurrency.
+
+Set `TRADINGAGENTS_API_DB_PATH` to retain completed/failed job status and events
+across API restarts. A job that was queued or running during a restart is recorded
+as failed with `server_restarted`; it is never silently resumed with an uncertain
+graph state. The Docker API service stores this journal with reports, cache and
+decision memory on the `tradingagents_data` volume:
+
+```bash
+docker compose up -d api
+```
+
+### Alpaca activity scanner
+
+The live US-stock scanner combines Alpaca movers, most-active-by-volume,
+most-active-by-trades and recent news, then enriches the bounded union with batch
+snapshots and historical bars. It applies transparent liquidity checks and a
+deterministic movement/RVOL/activity/news score. It retains gainers and losers;
+the score is attention-worthiness, not a trade recommendation.
+
+```bash
+python -m tradingagents.scanner --top 20 --feed iex
+```
+
+The same result is available to authenticated callers at `POST /v1/scanner/scan`
+with JSON such as `{"top_n": 20, "feed": "iex"}`. The result includes timestamps,
+session, feed, score components, completeness, excluded candidates and failed
+optional sources. When SIP screener activity is combined with IEX snapshot/bar
+volume, candidates carry a comparability warning. Historical scan dates are
+rejected because today's mover and activity lists cannot reconstruct past rankings.
+Outside regular hours, rankings are explicitly labeled as potentially belonging to
+the prior session. Multi-symbol news tags are discovery metadata and are not treated
+as evidence that a story is equally material to every tagged company.
+The scanner never invokes an LLM or submits an order.
 
 ### Fundamentals as filed
 

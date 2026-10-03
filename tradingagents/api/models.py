@@ -24,6 +24,7 @@ class AnalysisOptions(BaseModel):
     output_language: str | None = Field(default=None, min_length=2, max_length=50)
     checkpoint_enabled: bool | None = None
     save_reports: bool = True
+    x_posts_mode: Literal["disabled", "recent", "cache_only"] | None = None
 
 
 class AnalysisRequest(BaseModel):
@@ -112,6 +113,11 @@ class AnalysisJobResponse(BaseModel):
     cancel_requested: bool = False
     result: AnalysisResult | None = None
     error: JobError | None = None
+
+
+class ScannerRequest(BaseModel):
+    top_n: int = Field(default=20, ge=1, le=50)
+    feed: Literal["iex", "sip", "delayed_sip"] | None = None
 
 
 class JobEventsResponse(BaseModel):

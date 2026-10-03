@@ -17,6 +17,7 @@ from .models import (
     CapabilitiesResponse,
     HealthResponse,
     JobEventsResponse,
+    ScannerRequest,
 )
 
 
@@ -73,6 +74,15 @@ def create_app(
             asset_types=["stock", "crypto"],
             ratings=list(RATINGS_5_TIER),
         )
+
+    @application.post(
+        "/v1/scanner/scan",
+        dependencies=[Depends(authorize)],
+        tags=["scanner"],
+    )
+    def scan_market(request: ScannerRequest) -> dict:
+        from tradingagents.scanner import MarketScanner, ScannerConfig
+        return MarketScanner(config=ScannerConfig(top_n=request.top_n, feed=request.feed)).scan()
 
     @application.post(
         "/v1/analyses",

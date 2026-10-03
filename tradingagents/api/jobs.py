@@ -1,9 +1,10 @@
-"""Thread-safe, bounded in-process analysis job manager."""
+"""Thread-safe, bounded analysis jobs with optional SQLite persistence."""
 
 from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -46,10 +47,73 @@ class JobCapacityError(RuntimeError):
     pass
 
 
-class AnalysisJobManager:
-    """Runs analyses asynchronously; state lasts for this process only."""
+class _PersistentJobs:
+    """Optional SQLite status journal; running graphs fail closed after restart."""
 
-    def __init__(self, runner=None, max_workers: int | None = None, max_jobs: int | None = None):
+    def __init__(self, path: str):
+        self.path = path
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with self.connect() as db:
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS jobs ("
+                "analysis_id TEXT PRIMARY KEY, request_json TEXT NOT NULL, "
+                "response_json TEXT NOT NULL, events_json TEXT NOT NULL)"
+            )
+
+    def connect(self):
+        connection = sqlite3.connect(self.path, timeout=10)
+        connection.execute("PRAGMA journal_mode=WAL")
+        return connection
+
+    def save(self, job: _Job) -> None:
+        response = AnalysisJobManager._response(job).model_dump_json()
+        events = JobEventsResponse(analysis_id=job.analysis_id, events=job.events).model_dump_json()
+        with self.connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO jobs VALUES (?,?,?,?)",
+                (job.analysis_id, job.request.model_dump_json(), response, events),
+            )
+
+    def delete(self, analysis_id: str) -> None:
+        with self.connect() as db:
+            db.execute("DELETE FROM jobs WHERE analysis_id=?", (analysis_id,))
+
+    def load(self, limit: int) -> list[_Job]:
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM jobs ORDER BY rowid DESC LIMIT ?", (limit,)).fetchall()
+        jobs = []
+        for analysis_id, request_json, response_json, events_json in reversed(rows):
+            request = AnalysisRequest.model_validate_json(request_json)
+            response = AnalysisJobResponse.model_validate_json(response_json)
+            events = JobEventsResponse.model_validate_json(events_json)
+            jobs.append(
+                _Job(
+                    analysis_id=analysis_id,
+                    request=request,
+                    status=response.status,
+                    created_at=response.created_at,
+                    updated_at=response.updated_at,
+                    cancel_requested=response.cancel_requested,
+                    result=response.result,
+                    error=response.error,
+                    events=events.events,
+                )
+            )
+        return jobs
+
+
+class AnalysisJobManager:
+    """Run analyses asynchronously and optionally retain terminal state."""
+
+    def __init__(
+        self,
+        runner=None,
+        max_workers: int | None = None,
+        max_jobs: int | None = None,
+        persistence_path: str | None = None,
+    ):
         workers = max_workers if max_workers is not None else int(
             os.getenv("TRADINGAGENTS_API_WORKERS") or "1"
         )
@@ -62,6 +126,20 @@ class AnalysisJobManager:
         self.executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ta-analysis")
         self._jobs: dict[str, _Job] = {}
         self._lock = RLock()
+        configured_path = persistence_path if persistence_path is not None else os.getenv(
+            "TRADINGAGENTS_API_DB_PATH", ""
+        )
+        self._persistent = _PersistentJobs(configured_path) if configured_path else None
+        if self._persistent:
+            for job in self._persistent.load(self.max_jobs):
+                self._jobs[job.analysis_id] = job
+                if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+                    job.status = JobStatus.FAILED
+                    job.error = JobError(
+                        code="server_restarted",
+                        message="Analysis was interrupted by an API restart and must be submitted again",
+                    )
+                    self._event(job, job.status, "Analysis interrupted by server restart")
 
     def _event(self, job: _Job, status: JobStatus, message: str) -> None:
         job.updated_at = _now()
@@ -73,12 +151,16 @@ class AnalysisJobManager:
                 message=message,
             )
         )
+        if self._persistent:
+            self._persistent.save(job)
 
     def _remove_oldest_terminal_job(self) -> bool:
         terminal = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
         for analysis_id, job in self._jobs.items():
             if job.status in terminal:
                 del self._jobs[analysis_id]
+                if self._persistent:
+                    self._persistent.delete(analysis_id)
                 return True
         return False
 
@@ -89,6 +171,8 @@ class AnalysisJobManager:
             job = _Job(analysis_id=f"ana_{uuid4().hex}", request=request)
             self._event(job, JobStatus.QUEUED, "Analysis queued")
             self._jobs[job.analysis_id] = job
+            if self._persistent:
+                self._persistent.save(job)
             job.future = self.executor.submit(self._execute, job.analysis_id)
             return self._response(job)
 
