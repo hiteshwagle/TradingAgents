@@ -23,7 +23,7 @@ def _blank_settings_overlay():
         if (
             name.startswith("TRADINGAGENTS_")
             or name.startswith("FINNHUB_")
-            or name == "X_BEARER_TOKEN"
+            or name in {"X_BEARER_TOKEN", "STOCKTWITS_USERNAME", "STOCKTWITS_PASSWORD"}
         ):
             os.environ[name] = ""
 

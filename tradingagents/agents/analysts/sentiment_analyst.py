@@ -4,14 +4,13 @@ The node fetches its sources before calling the model and puts them in the
 prompt, so the model reports on data it was given rather than inventing posts:
 
   1. News headlines: Yahoo Finance
-  2. StockTwits messages: the cashtag stream, with Bullish/Bearish tags
+  2. StockTwits: authorized current aggregate sentiment and activity metrics
   3. X Posts: market-event search, ordered by engagement score
   4. Reddit posts: r/wallstreetbets, r/stocks, r/investing
 
-Each source is trimmed to the analysis window. With a TypeSafe key, the social
-posts are screened by Jev first (see post_screen). These feeds serve recent items
-and are not archived, so a historical run's sentiment inputs are not
-point-in-time.
+Each post source is trimmed to the analysis window. With a TypeSafe key, X and
+Reddit posts are screened by Jev first (see post_screen). StockTwits is skipped
+for historical dates because its supported aggregate endpoint is current-only.
 
 The report is a SentimentReport through structured output where the provider
 supports it and free text otherwise, so the band, score and confidence header
@@ -66,11 +65,11 @@ def create_sentiment_analyst(llm, x_posts_mode="recent"):
         # returns a string (no exceptions surface from here), so the LLM
         # always sees something — either real data or a clear placeholder.
         news_block = get_news.func(ticker, start_date, end_date)
-        # Pass the analysis window so a historical run trims social posts to it
-        # instead of leaking today's chatter into a backtest (#1220).
+        # Pass the analysis window so current-only sources can skip historical
+        # runs instead of leaking today's chatter into a backtest (#1220).
         screen = jev_screen(ticker)
         stocktwits_block = fetch_stocktwits_messages(
-            ticker, limit=30, start_date=start_date, end_date=end_date, screen=screen
+            ticker, limit=30, start_date=start_date, end_date=end_date
         )
         company_name = (
             resolve_instrument_identity(ticker).get("company_name")
@@ -161,8 +160,8 @@ Institutional framing. Fact-driven, slower-moving signal.
 {news_block}
 <end_of_news>
 
-### StockTwits messages — retail-trader social platform indexed by cashtag
-Fast-moving signal. Each message carries a user-labeled sentiment tag (Bullish / Bearish / no-label) plus the message body.
+### StockTwits aggregate sentiment — retail-trader social platform indexed by cashtag
+Fast-moving current signal. When authorized, this block contains normalized sentiment, message-volume, buzz, and participation metrics rather than individual posts. Historical runs intentionally mark it unavailable.
 
 <start_of_stocktwits>
 {stocktwits_block}
@@ -184,7 +183,7 @@ Community discussion, without vote or comment counts. Subreddit character matter
 
 ## How to analyze this data (best practices)
 
-1. **Read the StockTwits Bullish/Bearish ratio as a leading retail-sentiment signal.** A 70/30 bullish/bearish split is moderately bullish; ≥90/10 may indicate over-extension and contrarian risk; 50/50 is uncertainty. Sample size matters — base rates on the actual message count, not percentages alone. A block headed "Screened by Jev" has had off-topic posts removed; its stance count is a classifier's read of every on-topic post fetched, labelled or not, of which the posts listed are a sample. Read it alongside the user tags.
+1. **Read StockTwits as a current aggregate retail signal only.** Use its normalized sentiment together with message volume, buzz, and participation. High activity strengthens evidence that a sentiment reading is broadly active, but does not make it accurate or predictive. Do not infer individual opinions or a Bullish/Bearish message ratio from aggregate metrics. If it is unavailable for a historical window, do not substitute present-day StockTwits data.
 
 2. **Use X engagement only as an attention signal.** The score is likes + 2×reposts + replies. A high score means a Post spread widely; it does not make the claim accurate, representative, bullish, or bearish. Judge direction from the Post text and corroborate factual claims with the news block.
 

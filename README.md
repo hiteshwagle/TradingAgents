@@ -177,6 +177,8 @@ export APCA_API_KEY_ID=...         # Alpaca Market Data news (optional)
 export APCA_API_SECRET_KEY=...     # Alpaca Market Data news (optional)
 export FINNHUB_API_KEY=...         # Finnhub shared data enrichment (optional)
 export X_BEARER_TOKEN=...          # X recent-Post search (optional, usage-billed by X)
+export STOCKTWITS_USERNAME=...     # Authorized StockTwits Firestream account (optional)
+export STOCKTWITS_PASSWORD=...     # Authorized StockTwits Firestream account (optional)
 export TYPESAFE_API_KEY=...        # Jev social-post screening (optional)
 ```
 
@@ -203,6 +205,15 @@ API callers may set `options.x_posts_mode` to `disabled`, `recent`, or
 local cached response, and `recent` automatically skips historical windows older
 than seven days instead of spending quota on an unsupported recent-search call.
 
+StockTwits uses the supported Firestream sentiment-detail endpoint. Set
+`STOCKTWITS_USERNAME` and `STOCKTWITS_PASSWORD` only if the account is authorized
+for Firestream; the client sends HTTP Basic authentication and returns current
+aggregate sentiment, message-volume, buzz, and participation metrics. It does
+not use the retired anonymous symbol-stream endpoint. Without credentials the
+source is marked unavailable without a network request. Historical runs also
+skip StockTwits because this endpoint is current-only, preventing look-ahead
+bias.
+
 Query the same packaged client directly as JSON:
 
 ```bash
@@ -220,7 +231,7 @@ result = search_symbol_posts("NVDA", "NVIDIA", limit=20)
 posts = result["posts"]
 ```
 
-With `TYPESAFE_API_KEY` set, the Sentiment Analyst screens StockTwits, X, and Reddit posts with TypeSafe's Jev before reading them. Posts that are not about the company are dropped, and each source opens with a count of the remaining posts by stance: bullish, bearish, neutral, or unclear. Without the key, posts pass through unscreened. `jev-latest` moves with new releases; set `TYPESAFE_DEFAULT_MODEL` to a versioned ID such as `jev-1.13.0` to hold it fixed across runs.
+With `TYPESAFE_API_KEY` set, the Sentiment Analyst screens X and Reddit posts with TypeSafe's Jev before reading them. Posts that are not about the company are dropped, and each source opens with a count of the remaining posts by stance: bullish, bearish, neutral, or unclear. StockTwits supplies aggregates rather than individual posts, so it is not sent to Jev. Without the key, posts pass through unscreened. `jev-latest` moves with new releases; set `TYPESAFE_DEFAULT_MODEL` to a versioned ID such as `jev-1.13.0` to hold it fixed across runs.
 
 Alpaca Market Data, Yahoo Finance, and Finnhub are enabled for symbol-specific
 news used by the News and Sentiment Analysts. Set `APCA_API_KEY_ID` and
@@ -531,7 +542,10 @@ TradingAgents is LLM-driven, so two runs of the same ticker and date can differ.
 
 Language model sampling is non-deterministic. Even at a fixed temperature, providers do not guarantee byte-identical output across calls, and reasoning models (the default GPT-6 family, and any thinking-mode model) vary the most because their internal reasoning is itself sampled.
 
-Live data moves. News, StockTwits, and Reddit return different content as time passes, so a run today sees different inputs than a run last week even for the same historical trade date. Pin the analysis date to hold the price and indicator window fixed, but the social and news sources still reflect "now".
+Live data moves. Current-date StockTwits aggregates and recent social/news data
+can change between runs. Historical runs skip current-only StockTwits data and
+each remaining vendor enforces its own point-in-time coverage; an unavailable
+marker is safer than substituting present-day data for a past date.
 
 To reduce variation you can lower the sampling temperature. Set `temperature` in your config (or `TRADINGAGENTS_TEMPERATURE` in `.env`); lower values make models that honor it more repeatable. The current curated models are reasoning-first and largely ignore temperature, so for tighter reproducibility name a non-reasoning model in your config, or in `TRADINGAGENTS_DEEP_THINK_LLM` and `TRADINGAGENTS_QUICK_THINK_LLM`. Any model ID your provider serves is accepted, whether or not the picker lists it.
 

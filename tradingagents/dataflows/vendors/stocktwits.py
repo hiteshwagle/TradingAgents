@@ -1,167 +1,161 @@
-"""StockTwits public symbol-stream fetcher.
+"""Authorized StockTwits aggregate-sentiment client.
 
-StockTwits exposes a per-symbol message stream at
-``api.stocktwits.com/api/2/streams/symbol/{ticker}.json`` that requires no
-API key, no OAuth, and no registration. Each message includes a
-user-labeled sentiment field (``Bullish``/``Bearish``/null), the message
-body, timestamp, and posting user.
-
-The function is deliberately self-contained: short timeout, graceful
-degradation on any HTTP or parse failure, and a string return type so
-the calling agent gets a uniform interface regardless of whether the
-network call succeeded.
+StockTwits' supported Firestream endpoint requires HTTP Basic authentication
+and returns current aggregate sentiment, message-volume, and participation
+metrics. It does not return archived posts, so historical runs skip the source
+instead of leaking today's sentiment into a past analysis.
 """
 
 from __future__ import annotations
 
-import contextlib
-import html
 import logging
-from datetime import datetime
+import os
+from datetime import datetime, timezone
 
 import certifi
 import requests
+from requests.auth import HTTPBasicAuth
 
-from tradingagents.dataflows.date_window import coverage_gap, in_window
 from tradingagents.dataflows.symbols import crypto_base
 
 logger = logging.getLogger(__name__)
 
-_API = "https://api.stocktwits.com/api/2/streams/symbol/{ticker}.json"
+_API = (
+    "https://api-gw-prd.stocktwits.com/api-middleware/external/"
+    "sentiment/v2/{ticker}/detail"
+)
 _UA = "tradingagents/0.2 (+https://github.com/TauricResearch/TradingAgents)"
 
 
-def _created_at(message) -> datetime | None:
-    """Parse a message's ISO 8601 ``created_at``; None when missing or malformed."""
-    raw = message.get("created_at")
-    if not raw:
-        return None
-    with contextlib.suppress(ValueError, TypeError):
-        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-    return None
-
-
-def _within_window(messages, start_date, end_date):
-    """Keep only messages published in [start_date, end_date] (look-ahead safe).
-
-    No window (both None) leaves the list untouched for live callers. A message
-    whose ``created_at`` (ISO 8601) is unparseable is dropped in a historical
-    window, since we can't prove it isn't from after the as-of date (#1220).
-    """
-    if not (start_date and end_date):
-        return messages
-    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-    return [m for m in messages if in_window(_created_at(m), start_dt, end_dt)]
-
-
-def _body(message) -> str:
-    """The message text; the API serves it HTML-escaped (``&amp;``, ``&#39;``)."""
-    return html.unescape(message.get("body") or "")
-
-
 def _stocktwits_symbol(ticker: str) -> str:
-    """Map a crypto pair to StockTwits' ``<BASE>.X`` convention.
-
-    StockTwits lists crypto as ``BTC.X`` (Yahoo's ``BTC-USD`` form 404s), so any
-    crypto symbol resolves to its base plus ``.X``; other symbols pass through
-    upper-cased.
-    """
+    """Map crypto pairs to StockTwits' ``<BASE>.X`` convention."""
     base = crypto_base(ticker)
     return f"{base}.X" if base else ticker.strip().upper()
+
+
+def _is_historical(end_date: str | None) -> bool:
+    """Return true when the requested cutoff predates today in UTC."""
+    if not end_date:
+        return False
+    try:
+        return datetime.strptime(end_date, "%Y-%m-%d").date() < datetime.now(
+            timezone.utc
+        ).date()
+    except ValueError:
+        # Let the graph's normal date validation own malformed dates. Treating
+        # one as historical here is the safer behavior for current-only data.
+        return True
+
+
+def _metric(section: dict, key: str) -> str | None:
+    value = section.get(key)
+    if not isinstance(value, dict):
+        return None
+    label = str(value.get("labelNormalized") or "NA").replace("_", " ")
+    score = value.get("valueNormalized")
+    if isinstance(score, (int, float)):
+        return f"{label} ({score:.1f}/100)"
+    return label
+
+
+def _format_response(ticker: str, payload: object) -> str:
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+        return "<StockTwits unavailable: unexpected response shape>"
+
+    data = payload["data"]
+    sentiment = data.get("sentiment") if isinstance(data.get("sentiment"), dict) else {}
+    volume = (
+        data.get("messageVolume")
+        if isinstance(data.get("messageVolume"), dict)
+        else {}
+    )
+    timeframes = data.get("timeframes") if isinstance(data.get("timeframes"), dict) else {}
+
+    lines = [
+        f"StockTwits authorized aggregate sentiment for ${ticker.upper()} (current data)",
+        "This source contains aggregate metrics, not individual posts.",
+    ]
+    for label, section, key in (
+        ("Current sentiment", sentiment, "now"),
+        ("15-minute sentiment", sentiment, "15m"),
+        ("24-hour sentiment", sentiment, "24h"),
+        ("Current message volume", volume, "now"),
+        ("15-minute message volume", volume, "15m"),
+        ("24-hour message volume", volume, "24h"),
+    ):
+        formatted = _metric(section, key)
+        if formatted:
+            lines.append(f"{label}: {formatted}")
+
+    one_day = timeframes.get("1D")
+    if isinstance(one_day, dict):
+        for label, key in (
+            ("1-day sentiment", "sentiment"),
+            ("1-day buzz", "buzz"),
+            ("1-day participation", "participationScore"),
+        ):
+            formatted = _metric(one_day, key)
+            if formatted:
+                lines.append(f"{label}: {formatted}")
+
+    if len(lines) == 2:
+        return "<StockTwits unavailable: response contained no sentiment metrics>"
+    return "\n".join(lines)
 
 
 def fetch_stocktwits_messages(
     ticker: str,
     limit: int = 30,
-    timeout: float = 10.0,
+    timeout: float = 35.0,
     start_date: str | None = None,
     end_date: str | None = None,
     screen=None,
 ) -> str:
-    """Fetch recent StockTwits messages for ``ticker`` and return them as a
-    formatted plaintext block ready for prompt injection.
+    """Return current authorized StockTwits aggregate sentiment for ``ticker``.
 
-    When ``start_date``/``end_date`` (yyyy-mm-dd) are given, messages are trimmed
-    to that window, so a historical run never sees today's chatter (#1220). The
-    public stream only serves recent messages, so a window it cannot reach is
-    reported as unavailable rather than as silence.
-
-    ``screen``, when given, takes the message bodies and returns a keep flag per
-    message and a note line that heads the block.
-
-    Returns a placeholder string when the endpoint is unreachable, the
-    symbol has no messages, or the response shape is unexpected — the
-    caller never has to special-case None or exceptions.
+    ``limit`` and ``screen`` remain in the signature for compatibility with the
+    former post-stream client. Firestream returns aggregates rather than posts,
+    so neither option applies.
     """
+    del limit, screen
+
+    if _is_historical(end_date):
+        window = f"{start_date or '?'}..{end_date}"
+        return (
+            f"<StockTwits unavailable for historical window {window}: "
+            "authorized Firestream sentiment is current-only>"
+        )
+
+    username = os.getenv("STOCKTWITS_USERNAME", "").strip()
+    password = os.getenv("STOCKTWITS_PASSWORD", "")
+    if not username or not password:
+        return (
+            "<StockTwits unavailable: configure STOCKTWITS_USERNAME and "
+            "STOCKTWITS_PASSWORD for authorized Firestream access>"
+        )
+
     url = _API.format(ticker=_stocktwits_symbol(ticker))
     try:
         response = requests.get(
             url,
-            headers={"User-Agent": _UA, "Accept": "application/json"},
-            timeout=timeout,
+            auth=HTTPBasicAuth(username, password),
+            headers={
+                "User-Agent": _UA,
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip",
+            },
+            timeout=(5.0, timeout),
             verify=certifi.where(),
         )
         response.raise_for_status()
-        data = response.json()
-    except (requests.exceptions.RequestException, ValueError) as exc:
-        # requests normalizes TLS, timeout, HTTP and chunked-transfer failures;
-        # ValueError covers a response body that is not valid JSON.
-        logger.warning("StockTwits fetch failed for %s: %s", ticker, exc)
-        return f"<stocktwits unavailable: {type(exc).__name__}>"
+        payload = response.json()
+    except requests.exceptions.RequestException as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        detail = f"HTTP {status}" if status else type(exc).__name__
+        logger.warning("StockTwits fetch failed for %s: %s", ticker, detail)
+        return f"<StockTwits unavailable: {detail}>"
+    except ValueError:
+        logger.warning("StockTwits fetch failed for %s: invalid JSON response", ticker)
+        return "<StockTwits unavailable: invalid JSON response>"
 
-    fetched = data.get("messages", []) if isinstance(data, dict) else []
-    messages = _within_window(fetched, start_date, end_date)
-    if not messages:
-        if start_date and end_date:
-            gap = coverage_gap(
-                (_created_at(m) for m in fetched), start_date, end_date,
-                "StockTwits", f"messages about ${ticker.upper()}",
-            )
-            return gap or (
-                f"<no StockTwits messages for ${ticker.upper()} within "
-                f"{start_date}..{end_date}>"
-            )
-        return f"<no StockTwits messages found for ${ticker.upper()}>"
-
-    note = ""
-    if screen:
-        keep, note = screen([_body(m) for m in messages])
-        screened = len(messages)
-        messages = [m for m, kept in zip(messages, keep, strict=True) if kept]
-        if not messages:
-            return f"{note}\n\n<none of the {screened} StockTwits messages is about ${ticker.upper()}>"
-
-    lines = []
-    bullish = bearish = unlabeled = 0
-    for m in messages[:limit]:
-        created = m.get("created_at", "")
-        user = (m.get("user") or {}).get("username", "?")
-        entities = m.get("entities") or {}
-        sentiment_obj = entities.get("sentiment") or {}
-        sentiment = sentiment_obj.get("basic") if isinstance(sentiment_obj, dict) else None
-        body = _body(m).replace("\n", " ").strip()
-        if len(body) > 280:
-            body = body[:280] + "…"
-
-        if sentiment == "Bullish":
-            bullish += 1
-            tag = "Bullish"
-        elif sentiment == "Bearish":
-            bearish += 1
-            tag = "Bearish"
-        else:
-            unlabeled += 1
-            tag = "no-label"
-        lines.append(f"[{created} · @{user} · {tag}] {body}")
-
-    total = bullish + bearish + unlabeled
-    bull_pct = round(100 * bullish / total) if total else 0
-    bear_pct = round(100 * bearish / total) if total else 0
-    summary = (
-        f"Bullish: {bullish} ({bull_pct}%) · "
-        f"Bearish: {bearish} ({bear_pct}%) · "
-        f"Unlabeled: {unlabeled} · "
-        f"Total: {total} most-recent messages"
-    )
-    return (f"{note}\n\n" if note else "") + summary + "\n\n" + "\n".join(lines)
+    return _format_response(ticker, payload)
